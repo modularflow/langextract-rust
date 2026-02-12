@@ -41,7 +41,6 @@ env_logger = "0.11"
 
 # Concurrent processing
 futures = "0.3"
-rayon = "1.0"
 
 # Async trait support
 async-trait = "0.1"

@@ -543,7 +543,7 @@ impl Resolver {
         let raw_file_path = if self.validation_config.save_raw_outputs {
             match self.save_raw_output(raw_response, Some("validation_parse")) {
                 Ok(path) => {
-                    println!("💾 Raw output saved to: {}", path);
+                    log::debug!("Raw output saved to: {}", path);
                     Some(path)
                 }
                 Err(e) => {
@@ -556,17 +556,17 @@ impl Resolver {
         };
 
         // Step 2: Attempt to parse the response with enhanced cleaning and repair
-        println!("🔍 Parsing model response...");
+        log::debug!("Parsing model response...");
         let parse_result = self.parse_response_with_repair(raw_response, expected_fields);
         
         // Step 3: Validate the parsed data
         let mut validation_result = match &parse_result {
             Ok(extractions) => {
-                println!("✅ Successfully parsed {} potential extractions", extractions.len());
+                log::debug!("Successfully parsed {} potential extractions", extractions.len());
                 self.validate_extractions(extractions, expected_fields)
             }
             Err(parse_error) => {
-                println!("❌ Failed to parse model response");
+                log::debug!("Failed to parse model response");
                 // If parsing failed, create validation result with error
                 ValidationResult {
                     is_valid: false,
@@ -597,11 +597,11 @@ impl Resolver {
                 match &validation_result.raw_output_file {
                     Some(path) => {
                         log::warn!("Parse failed but raw data saved to: {}", path);
-                        println!("⚠️  Parse failed - check raw output at: {}", path);
+                        log::warn!("Parse failed - check raw output at: {}", path);
                     }
                     None => {
                         log::warn!("Parse failed and no raw data was saved");
-                        println!("⚠️  Parse failed and raw data could not be saved");
+                        log::warn!("Parse failed and raw data could not be saved");
                     }
                 }
                 Err(e)
@@ -658,7 +658,7 @@ impl Resolver {
                         // If we found multiple expected fields in the single extraction_text,
                         // this is likely malformed and should be re-parsed
                         if found_fields.len() > 1 {
-                            println!("🔧 Detected malformed JSON: {} extraction classes found in single extraction_text '{}'",
+                            log::debug!("Detected malformed JSON: {} extraction classes found in single extraction_text '{}'",
                                      found_fields.len(), single_key);
 
                             // Try to extract individual field values
@@ -686,7 +686,7 @@ impl Resolver {
                             }
 
                             if !repaired_obj.is_empty() {
-                                println!("✅ Successfully repaired malformed JSON, extracted {} fields", repaired_obj.len());
+                                log::debug!("Successfully repaired malformed JSON, extracted {} fields", repaired_obj.len());
                                 return Some(serde_json::Value::Object(repaired_obj));
                             }
                         }
@@ -702,15 +702,15 @@ impl Resolver {
     fn parse_response_with_repair(&self, response: &str, expected_fields: &[String]) -> LangExtractResult<Vec<Extraction>> {
         // First, clean the response (remove code fences, etc.)
         let cleaned_response = self.clean_response(response);
-        println!("🧹 Cleaned response length: {} chars", cleaned_response.len());
+        log::debug!("Cleaned response length: {} chars", cleaned_response.len());
 
         // Try to parse as JSON first
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&cleaned_response) {
-            println!("📄 Parsed JSON successfully");
+            log::debug!("Parsed JSON successfully");
 
             // Check if the JSON needs repair (malformed case with multiple classes in single extraction_text)
             if let Some(repaired_json) = self.detect_and_repair_malformed_json(&json_value, expected_fields) {
-                println!("🔧 Applied JSON repair logic");
+                log::debug!("Applied JSON repair logic");
                 return self.parse_json_response(&repaired_json);
             } else {
                 return self.parse_json_response(&json_value);
@@ -722,11 +722,11 @@ impl Resolver {
             if let Some(json_end) = cleaned_response.rfind('}') {
                 let json_str = &cleaned_response[json_start..=json_end];
                 if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    println!("📄 Extracted and parsed JSON from wrapped content");
+                    log::debug!("Extracted and parsed JSON from wrapped content");
 
                     // Check if the extracted JSON needs repair
                     if let Some(repaired_json) = self.detect_and_repair_malformed_json(&json_value, expected_fields) {
-                        println!("🔧 Applied JSON repair logic to extracted content");
+                        log::debug!("Applied JSON repair logic to extracted content");
                         return self.parse_json_response(&repaired_json);
                     } else {
                         return self.parse_json_response(&json_value);
