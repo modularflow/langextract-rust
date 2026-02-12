@@ -103,13 +103,13 @@ impl UniversalProvider {
         })
     }
 
-    /// Inference implementation for OpenAI-compatible APIs
+    /// Process a single OpenAI prompt
     #[cfg(feature = "openai")]
-    async fn infer_openai(
+    async fn infer_openai_single(
         &self,
-        batch_prompts: &[String],
+        prompt: &str,
         kwargs: &HashMap<String, serde_json::Value>,
-    ) -> LangExtractResult<Vec<Vec<ScoredOutput>>> {
+    ) -> LangExtractResult<Vec<ScoredOutput>> {
         use async_openai::types::{
             ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
             ChatCompletionRequestSystemMessageContent, CreateChatCompletionRequest,
@@ -119,188 +119,206 @@ impl UniversalProvider {
             LangExtractError::configuration("OpenAI client not initialized")
         })?;
 
-        let mut results = Vec::new();
+        // Create system message for format instructions
+        let system_message = match self.format_type {
+            FormatType::Json => "You are a helpful assistant that responds in JSON format. Always return valid JSON that matches the expected structure from the examples.",
+            FormatType::Yaml => "You are a helpful assistant that responds in YAML format. Always return valid YAML that matches the expected structure from the examples.",
+        };
 
-        for prompt in batch_prompts {
-            // Create system message for format instructions
-            let system_message = match self.format_type {
-                FormatType::Json => "You are a helpful assistant that responds in JSON format. Always return valid JSON that matches the expected structure from the examples.",
-                FormatType::Yaml => "You are a helpful assistant that responds in YAML format. Always return valid YAML that matches the expected structure from the examples.",
-            };
+        // Create messages for the chat completion
+        let messages = vec![
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                content: ChatCompletionRequestSystemMessageContent::Text(system_message.to_string()),
+                name: None,
+            }),
+            ChatCompletionRequestMessage::User(async_openai::types::ChatCompletionRequestUserMessage {
+                content: async_openai::types::ChatCompletionRequestUserMessageContent::Text(prompt.to_string()),
+                name: None,
+            }),
+        ];
 
-            // Create messages for the chat completion
-            let messages = vec![
-                ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
-                    content: ChatCompletionRequestSystemMessageContent::Text(system_message.to_string()),
-                    name: None,
-                }),
-                ChatCompletionRequestMessage::User(async_openai::types::ChatCompletionRequestUserMessage {
-                    content: async_openai::types::ChatCompletionRequestUserMessageContent::Text(prompt.clone()),
-                    name: None,
-                }),
-            ];
+        // Build the request
+        let mut request = CreateChatCompletionRequest {
+            model: self.config.model.clone(),
+            messages,
+            temperature: None,
+            max_tokens: None,
+            ..Default::default()
+        };
 
-            // Build the request
-            let mut request = CreateChatCompletionRequest {
-                model: self.config.model.clone(),
-                messages,
-                temperature: None,
-                max_tokens: None,
-                ..Default::default()
-            };
-
-            // Apply parameters from kwargs
-            if let Some(temp) = kwargs.get("temperature") {
-                if let Some(temp_f64) = temp.as_f64() {
-                    request.temperature = Some(temp_f64 as f32);
-                }
+        // Apply parameters from kwargs
+        if let Some(temp) = kwargs.get("temperature") {
+            if let Some(temp_f64) = temp.as_f64() {
+                request.temperature = Some(temp_f64 as f32);
             }
-            
-            if let Some(max_tokens) = kwargs.get("max_tokens") {
-                if let Some(max_tokens_u64) = max_tokens.as_u64() {
-                    request.max_tokens = Some(max_tokens_u64 as u32);
-                }
+        }
+        
+        if let Some(max_tokens) = kwargs.get("max_tokens") {
+            if let Some(max_tokens_u64) = max_tokens.as_u64() {
+                request.max_tokens = Some(max_tokens_u64 as u32);
             }
-
-            // Make the API call with retry logic
-            report_progress(ProgressEvent::ModelCall {
-                provider: "OpenAI".to_string(),
-                model: self.config.model.clone(),
-                input_length: prompt.len(),
-            });
-            
-            let response = self.retry_with_backoff(
-                || async {
-                    let result = client.chat().create(request.clone()).await.map_err(|e| {
-                        report_progress(ProgressEvent::Error {
-                            operation: "OpenAI API request".to_string(),
-                            error: format!("OpenAI API error: {}", e),
-                        });
-                        LangExtractError::inference_simple(format!("OpenAI API error: {}", e))
-                    });
-                    result
-                },
-                &format!("OpenAI API call for prompt batch {}", prompt.len())
-            ).await?;
-
-            // Extract the response content
-            let content = response
-                .choices
-                .get(0)
-                .and_then(|choice| choice.message.content.as_ref())
-                .ok_or_else(|| {
-                    LangExtractError::parsing("No content in OpenAI response")
-                })?;
-
-            results.push(vec![ScoredOutput::from_text(content.clone())]);
         }
 
-        Ok(results)
+        // Make the API call with retry logic
+        report_progress(ProgressEvent::ModelCall {
+            provider: "OpenAI".to_string(),
+            model: self.config.model.clone(),
+            input_length: prompt.len(),
+        });
+        
+        let response = self.retry_with_backoff(
+            || async {
+                let result = client.chat().create(request.clone()).await.map_err(|e| {
+                    report_progress(ProgressEvent::Error {
+                        operation: "OpenAI API request".to_string(),
+                        error: format!("OpenAI API error: {}", e),
+                    });
+                    LangExtractError::inference_simple(format!("OpenAI API error: {}", e))
+                });
+                result
+            },
+            &format!("OpenAI API call for prompt len {}", prompt.len())
+        ).await?;
+
+        // Extract the response content
+        let content = response
+            .choices
+            .get(0)
+            .and_then(|choice| choice.message.content.as_ref())
+            .ok_or_else(|| {
+                LangExtractError::parsing("No content in OpenAI response")
+            })?;
+
+        Ok(vec![ScoredOutput::from_text(content.clone())])
     }
 
-    /// Inference implementation for Ollama
+    /// Inference implementation for OpenAI-compatible APIs — processes prompts concurrently
+    #[cfg(feature = "openai")]
+    async fn infer_openai(
+        &self,
+        batch_prompts: &[String],
+        kwargs: &HashMap<String, serde_json::Value>,
+    ) -> LangExtractResult<Vec<Vec<ScoredOutput>>> {
+        use futures::future::join_all;
+
+        // Process all prompts concurrently instead of sequentially
+        let futures: Vec<_> = batch_prompts.iter()
+            .map(|prompt| self.infer_openai_single(prompt, kwargs))
+            .collect();
+
+        let results = join_all(futures).await;
+        
+        // Collect results, propagating errors
+        results.into_iter().collect()
+    }
+
+    /// Process a single Ollama prompt
+    async fn infer_ollama_single(
+        &self,
+        prompt: &str,
+        kwargs: &HashMap<String, serde_json::Value>,
+    ) -> LangExtractResult<Vec<ScoredOutput>> {
+        let mut request_body = serde_json::json!({
+            "model": self.config.model,
+            "prompt": prompt,
+            "stream": false,
+        });
+
+        // Set format for JSON output if needed
+        if self.format_type == FormatType::Json {
+            request_body["format"] = serde_json::json!("json");
+        }
+
+        // Apply parameters from kwargs
+        let mut options = serde_json::Map::new();
+        if let Some(temp) = kwargs.get("temperature") {
+            options.insert("temperature".to_string(), temp.clone());
+        }
+        if let Some(max_tokens) = kwargs.get("max_tokens") {
+            options.insert("num_predict".to_string(), max_tokens.clone());
+        }
+        if !options.is_empty() {
+            request_body["options"] = serde_json::Value::Object(options);
+        }
+
+        let url = format!("{}/api/generate", self.config.base_url);
+
+        // Make the API call with retry logic
+        report_progress(ProgressEvent::ModelCall {
+            provider: "Ollama".to_string(),
+            model: self.config.model.clone(),
+            input_length: prompt.len(),
+        });
+        
+        let response_body = self.retry_with_backoff(
+            || async {
+                let mut request = self.client.post(&url).json(&request_body);
+
+                // Add headers
+                for (key, value) in &self.config.headers {
+                    request = request.header(key, value);
+                }
+
+                let response = request.send().await.map_err(|e| {
+                    report_progress(ProgressEvent::Error {
+                        operation: "Ollama HTTP request".to_string(),
+                        error: format!("HTTP request failed: {}", e),
+                    });
+                    LangExtractError::NetworkError(e)
+                })?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    report_progress(ProgressEvent::Error {
+                        operation: "Ollama HTTP status".to_string(),
+                        error: format!("HTTP error status: {}", status),
+                    });
+                    return Err(LangExtractError::inference_simple(format!(
+                        "Ollama API error: HTTP {}",
+                        status
+                    )));
+                }
+
+                let response_body: serde_json::Value = response.json().await.map_err(|e| {
+                    report_progress(ProgressEvent::Error {
+                        operation: "Ollama JSON parsing".to_string(),
+                        error: format!("JSON parsing failed: {}", e),
+                    });
+                    LangExtractError::parsing(format!("Failed to parse Ollama response: {}", e))
+                })?;
+
+                Ok(response_body)
+            },
+            &format!("Ollama API call for prompt len {}", prompt.len())
+        ).await?;
+
+        let content = response_body
+            .get("response")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| {
+                LangExtractError::parsing("Missing 'response' field in Ollama response")
+            })?;
+
+        Ok(vec![ScoredOutput::from_text(content.to_string())])
+    }
+
+    /// Inference implementation for Ollama — processes prompts concurrently
     async fn infer_ollama(
         &self,
         batch_prompts: &[String],
         kwargs: &HashMap<String, serde_json::Value>,
     ) -> LangExtractResult<Vec<Vec<ScoredOutput>>> {
-        let mut results = Vec::new();
+        use futures::future::join_all;
 
-        for prompt in batch_prompts {
-            let mut request_body = serde_json::json!({
-                "model": self.config.model,
-                "prompt": prompt,
-                "stream": false,
-            });
+        // Process all prompts concurrently instead of sequentially
+        let futures: Vec<_> = batch_prompts.iter()
+            .map(|prompt| self.infer_ollama_single(prompt, kwargs))
+            .collect();
 
-            // Set format for JSON output if needed
-            if self.format_type == FormatType::Json {
-                request_body["format"] = serde_json::json!("json");
-            }
-
-            // Apply parameters from kwargs
-            if let Some(options) = request_body.get_mut("options") {
-                if let Some(temp) = kwargs.get("temperature") {
-                    options["temperature"] = temp.clone();
-                }
-                if let Some(max_tokens) = kwargs.get("max_tokens") {
-                    options["num_predict"] = max_tokens.clone();
-                }
-            } else {
-                let mut options = serde_json::Map::new();
-                if let Some(temp) = kwargs.get("temperature") {
-                    options.insert("temperature".to_string(), temp.clone());
-                }
-                if let Some(max_tokens) = kwargs.get("max_tokens") {
-                    options.insert("num_predict".to_string(), max_tokens.clone());
-                }
-                if !options.is_empty() {
-                    request_body["options"] = serde_json::Value::Object(options);
-                }
-            }
-
-            let url = format!("{}/api/generate", self.config.base_url);
-
-            // Make the API call with retry logic
-            report_progress(ProgressEvent::ModelCall {
-                provider: "Ollama".to_string(),
-                model: self.config.model.clone(),
-                input_length: prompt.len(),
-            });
-            
-            let response_body = self.retry_with_backoff(
-                || async {
-                    let mut request = self.client.post(&url).json(&request_body);
-
-                    // Add headers
-                    for (key, value) in &self.config.headers {
-                        request = request.header(key, value);
-                    }
-
-                    let response = request.send().await.map_err(|e| {
-                        report_progress(ProgressEvent::Error {
-                            operation: "Ollama HTTP request".to_string(),
-                            error: format!("HTTP request failed: {}", e),
-                        });
-                        LangExtractError::NetworkError(e)
-                    })?;
-
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        report_progress(ProgressEvent::Error {
-                            operation: "Ollama HTTP status".to_string(),
-                            error: format!("HTTP error status: {}", status),
-                        });
-                        return Err(LangExtractError::inference_simple(format!(
-                            "Ollama API error: HTTP {}",
-                            status
-                        )));
-                    }
-
-                    let response_body: serde_json::Value = response.json().await.map_err(|e| {
-                        report_progress(ProgressEvent::Error {
-                            operation: "Ollama JSON parsing".to_string(),
-                            error: format!("JSON parsing failed: {}", e),
-                        });
-                        LangExtractError::parsing(format!("Failed to parse Ollama response: {}", e))
-                    })?;
-
-                    Ok(response_body)
-                },
-                &format!("Ollama API call for prompt batch {}", prompt.len())
-            ).await?;
-
-            let content = response_body
-                .get("response")
-                .and_then(|r| r.as_str())
-                .ok_or_else(|| {
-                    LangExtractError::parsing("Missing 'response' field in Ollama response")
-                })?;
-
-            results.push(vec![ScoredOutput::from_text(content.to_string())]);
-        }
-
-        Ok(results)
+        let results = join_all(futures).await;
+        
+        // Collect results, propagating errors
+        results.into_iter().collect()
     }
 }
 

@@ -54,17 +54,30 @@ impl TextAligner {
         Self { config }
     }
 
-    /// Align extractions with the source text
+    /// Align extractions with the source text.
+    /// Pre-lowercases the source text once and reuses it across all extractions
+    /// to avoid repeated O(n) allocations.
     pub fn align_extractions(
         &self,
         extractions: &mut [Extraction],
         source_text: &str,
         char_offset: usize,
     ) -> LangExtractResult<usize> {
-        let mut aligned_count = 0;
+        // Pre-lowercase the source text once for all extractions (issue 5.3 fix)
+        let search_text = if self.config.case_sensitive {
+            source_text.to_string()
+        } else {
+            source_text.to_lowercase()
+        };
 
+        // Pre-compute source words and word set for fuzzy matching reuse
+        let source_words: Vec<&str> = search_text.split_whitespace().collect();
+
+        let mut aligned_count = 0;
         for extraction in extractions.iter_mut() {
-            if let Some(interval) = self.align_single_extraction(extraction, source_text, char_offset)? {
+            if let Some(interval) = self.align_single_extraction_with_cache(
+                extraction, &search_text, &source_words, char_offset,
+            )? {
                 extraction.char_interval = Some(interval);
                 aligned_count += 1;
             }
@@ -73,11 +86,12 @@ impl TextAligner {
         Ok(aligned_count)
     }
 
-    /// Align a single extraction with the source text
-    pub fn align_single_extraction(
+    /// Align a single extraction using pre-computed lowercase source text and word list.
+    fn align_single_extraction_with_cache(
         &self,
         extraction: &mut Extraction,
-        source_text: &str,
+        search_text: &str,
+        source_words: &[&str],
         char_offset: usize,
     ) -> LangExtractResult<Option<CharInterval>> {
         let extraction_text = if self.config.case_sensitive {
@@ -86,14 +100,8 @@ impl TextAligner {
             extraction.extraction_text.to_lowercase()
         };
 
-        let search_text = if self.config.case_sensitive {
-            source_text.to_string()
-        } else {
-            source_text.to_lowercase()
-        };
-
         // Try exact matching first
-        if let Some((start, end, status)) = self.find_exact_match(&extraction_text, &search_text) {
+        if let Some((start, end, status)) = self.find_exact_match(&extraction_text, search_text) {
             extraction.alignment_status = Some(status);
             return Ok(Some(CharInterval::new(
                 Some(start + char_offset),
@@ -101,9 +109,9 @@ impl TextAligner {
             )));
         }
 
-        // Try fuzzy matching if enabled
+        // Try fuzzy matching if enabled (reuse pre-computed source_words)
         if self.config.enable_fuzzy_alignment {
-            if let Some((start, end, status)) = self.find_fuzzy_match(&extraction_text, &search_text) {
+            if let Some((start, end, status)) = self.find_fuzzy_match_with_words(&extraction_text, search_text, source_words) {
                 extraction.alignment_status = Some(status);
                 return Ok(Some(CharInterval::new(
                     Some(start + char_offset),
@@ -115,6 +123,23 @@ impl TextAligner {
         // No alignment found
         extraction.alignment_status = None;
         Ok(None)
+    }
+
+    /// Align a single extraction with the source text (public API, lowercases on each call)
+    pub fn align_single_extraction(
+        &self,
+        extraction: &mut Extraction,
+        source_text: &str,
+        char_offset: usize,
+    ) -> LangExtractResult<Option<CharInterval>> {
+        let search_text = if self.config.case_sensitive {
+            source_text.to_string()
+        } else {
+            source_text.to_lowercase()
+        };
+        let source_words: Vec<&str> = search_text.split_whitespace().collect();
+
+        self.align_single_extraction_with_cache(extraction, &search_text, &source_words, char_offset)
     }
 
     /// Find exact matches in the source text
@@ -150,10 +175,17 @@ impl TextAligner {
         None
     }
 
-    /// Find fuzzy matches using sliding window approach
+    /// Find fuzzy matches using sliding window approach (allocates source words internally)
+    #[allow(dead_code)]
     fn find_fuzzy_match(&self, extraction_text: &str, source_text: &str) -> Option<(usize, usize, AlignmentStatus)> {
-        let extraction_words: Vec<&str> = extraction_text.split_whitespace().collect();
         let source_words: Vec<&str> = source_text.split_whitespace().collect();
+        self.find_fuzzy_match_with_words(extraction_text, source_text, &source_words)
+    }
+
+    /// Find fuzzy matches using pre-computed source word list.
+    /// Avoids re-splitting and re-lowercasing the source text per extraction.
+    fn find_fuzzy_match_with_words(&self, extraction_text: &str, source_text: &str, source_words: &[&str]) -> Option<(usize, usize, AlignmentStatus)> {
+        let extraction_words: Vec<&str> = extraction_text.split_whitespace().collect();
 
         if extraction_words.is_empty() || source_words.is_empty() {
             return None;
@@ -170,7 +202,8 @@ impl TextAligner {
                 let end_idx = start_idx + window_size;
                 let window = &source_words[start_idx..end_idx];
 
-                let similarity = self.calculate_word_similarity(&extraction_words, window);
+                // Words are already lowercased (from pre-computation), use direct comparison
+                let similarity = self.calculate_word_similarity_direct(&extraction_words, window);
                 
                 if similarity >= self.config.fuzzy_alignment_threshold {
                     if let Some((_, _, current_best)) = best_match {
@@ -209,7 +242,29 @@ impl TextAligner {
         None
     }
 
+    /// Calculate similarity between two pre-lowercased word sequences.
+    /// Uses direct comparison (no re-lowercasing) since input words are
+    /// already normalized.
+    fn calculate_word_similarity_direct(&self, words1: &[&str], words2: &[&str]) -> f32 {
+        if words1.is_empty() && words2.is_empty() {
+            return 1.0;
+        }
+        if words1.is_empty() || words2.is_empty() {
+            return 0.0;
+        }
+
+        // Build HashSet for O(1) lookup instead of Vec::contains O(n)
+        let word_set2: std::collections::HashSet<&str> = words2.iter().copied().collect();
+
+        // Count how many words from extraction are found in the source window
+        let found_count = words1.iter().filter(|w| word_set2.contains(**w)).count();
+
+        // Calculate coverage: what percentage of extraction words are found
+        found_count as f32 / words1.len() as f32
+    }
+
     /// Calculate similarity between two word sequences using coverage-based similarity
+    /// (legacy method that lowercases internally, kept for backward compatibility)
     fn calculate_word_similarity(&self, words1: &[&str], words2: &[&str]) -> f32 {
         if words1.is_empty() && words2.is_empty() {
             return 1.0;
@@ -222,13 +277,11 @@ impl TextAligner {
         let normalized_words1: Vec<String> = words1.iter().map(|w| w.to_lowercase()).collect();
         let normalized_words2: Vec<String> = words2.iter().map(|w| w.to_lowercase()).collect();
 
+        // Build HashSet for O(1) lookup instead of Vec::contains O(n)
+        let word_set2: std::collections::HashSet<&str> = normalized_words2.iter().map(|s| s.as_str()).collect();
+
         // Count how many words from extraction are found in the source window
-        let mut found_count = 0;
-        for word1 in &normalized_words1 {
-            if normalized_words2.contains(word1) {
-                found_count += 1;
-            }
-        }
+        let found_count = normalized_words1.iter().filter(|w| word_set2.contains(w.as_str())).count();
 
         // Calculate coverage: what percentage of extraction words are found
         found_count as f32 / normalized_words1.len() as f32
