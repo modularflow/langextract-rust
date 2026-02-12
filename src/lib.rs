@@ -306,12 +306,16 @@ pub async fn extract(
     // Create resolver
     let resolver = resolver::Resolver::new(&config, language_model.requires_fence_output())?;
 
-    // Create annotator
-    let annotator = annotation::Annotator::new(
+    // Create annotator with config-driven inference parameters
+    let annotator = annotation::Annotator::with_config(
         language_model,
         prompt_template,
         config.format_type,
         resolver.fence_output(),
+        config.temperature,
+        config.language_model_params.get("max_output_tokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize),
     );
 
     // Perform annotation - use multi-pass if enabled
