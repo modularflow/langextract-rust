@@ -12,6 +12,8 @@ use crate::{
 };
 use regex::Regex;
 use semchunk_rs::Chunker;
+use std::sync::Arc;
+use once_cell::sync::Lazy;
 
 /// Different strategies for chunking text
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,19 +118,19 @@ impl TextChunk {
 pub struct TokenChunk {
     /// Token interval of the chunk in the source document
     pub token_interval: TokenInterval,
-    /// Optional reference to the source document
-    pub document: Option<Document>,
-    /// Cached chunk text (lazy-loaded)
+    /// Optional reference to the source document (Arc-shared to avoid cloning)
+    pub document: Option<Arc<Document>>,
+    /// Pre-computed chunk text (populated at creation time)
     chunk_text: Option<String>,
-    /// Cached character interval (lazy-loaded)
+    /// Pre-computed character interval (populated at creation time)
     char_interval: Option<CharInterval>,
     /// Custom character end position to include whitespace (overrides token-based end)
     custom_char_end: Option<usize>,
 }
 
 impl TokenChunk {
-    /// Create a new token chunk
-    pub fn new(token_interval: TokenInterval, document: Option<Document>) -> Self {
+    /// Create a new token chunk (without pre-computed text/interval)
+    pub fn new(token_interval: TokenInterval, document: Option<Arc<Document>>) -> Self {
         Self {
             token_interval,
             document,
@@ -139,13 +141,47 @@ impl TokenChunk {
     }
 
     /// Create a new token chunk with custom character end position
-    pub fn with_char_end(token_interval: TokenInterval, document: Option<Document>, char_end: usize) -> Self {
+    pub fn with_char_end(token_interval: TokenInterval, document: Option<Arc<Document>>, char_end: usize) -> Self {
         Self {
             token_interval,
             document,
             chunk_text: None,
             char_interval: None,
             custom_char_end: Some(char_end),
+        }
+    }
+
+    /// Create a new token chunk with pre-computed text and character interval.
+    /// This avoids re-tokenization when the tokenized text is already available.
+    pub fn with_precomputed(
+        token_interval: TokenInterval,
+        document: Option<Arc<Document>>,
+        chunk_text: String,
+        char_interval: CharInterval,
+    ) -> Self {
+        Self {
+            token_interval,
+            document,
+            chunk_text: Some(chunk_text),
+            char_interval: Some(char_interval),
+            custom_char_end: None,
+        }
+    }
+
+    /// Create a new token chunk with pre-computed text, char interval, and custom end.
+    pub fn with_precomputed_and_char_end(
+        token_interval: TokenInterval,
+        document: Option<Arc<Document>>,
+        chunk_text: String,
+        char_interval: CharInterval,
+        _char_end: usize,
+    ) -> Self {
+        Self {
+            token_interval,
+            document,
+            chunk_text: Some(chunk_text),
+            char_interval: Some(char_interval),
+            custom_char_end: None, // Not needed when text is already pre-computed
         }
     }
 
@@ -161,8 +197,10 @@ impl TokenChunk {
         None
     }
 
-    /// Get the chunk text (requires tokenizer to reconstruct)
+    /// Get the chunk text. Returns pre-computed text if available, otherwise
+    /// falls back to tokenizer reconstruction.
     pub fn chunk_text(&self, tokenizer: &Tokenizer) -> LangExtractResult<String> {
+        // Return pre-computed text if available (avoids re-tokenization)
         if let Some(ref cached) = self.chunk_text {
             return Ok(cached.clone());
         }
@@ -201,8 +239,10 @@ impl TokenChunk {
         self.document.as_ref()?.additional_context.as_deref()
     }
 
-    /// Get the character interval corresponding to the token interval
+    /// Get the character interval. Returns pre-computed interval if available,
+    /// otherwise falls back to tokenizer computation.
     pub fn char_interval(&self, tokenizer: &Tokenizer) -> LangExtractResult<CharInterval> {
+        // Return pre-computed interval if available (avoids re-tokenization)
         if let Some(ref cached) = self.char_interval {
             return Ok(cached.clone());
         }
@@ -234,10 +274,12 @@ impl TokenChunk {
     }
 }
 
+/// Pre-compiled whitespace regex (avoids recompilation on every call)
+static WHITESPACE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
+
 /// Sanitize text by converting all whitespace to single spaces
 fn sanitize_text(text: &str) -> LangExtractResult<String> {
-    let sanitized = regex::Regex::new(r"\s+")
-        .map_err(|e| crate::exceptions::LangExtractError::configuration(format!("Regex error: {}", e)))?
+    let sanitized = WHITESPACE_RE
         .replace_all(text.trim(), " ")
         .to_string();
     
@@ -559,7 +601,7 @@ pub struct ChunkIterator<'a> {
     max_char_buffer: usize,
     sentence_iter: SentenceIterator<'a>,
     broken_sentence: bool,
-    document: Option<&'a Document>,
+    document: Option<Arc<Document>>,
     next_chunk_start_char: Option<usize>,
 }
 
@@ -569,7 +611,7 @@ impl<'a> ChunkIterator<'a> {
         text: &'a TokenizedText,
         tokenizer: &'a Tokenizer,
         max_char_buffer: usize,
-        document: Option<&'a Document>,
+        document: Option<&Document>,
     ) -> LangExtractResult<Self> {
         let sentence_iter = SentenceIterator::new(text, tokenizer, 0)?;
         
@@ -579,7 +621,7 @@ impl<'a> ChunkIterator<'a> {
             max_char_buffer,
             sentence_iter,
             broken_sentence: false,
-            document,
+            document: document.map(|d| Arc::new(d.clone())),
             next_chunk_start_char: Some(0),
         })
     }
@@ -611,6 +653,41 @@ impl<'a> ChunkIterator<'a> {
         })
     }
 
+    /// Pre-compute chunk text and char interval from the already-tokenized text.
+    /// This avoids re-tokenization when the chunk is later accessed.
+    fn precompute_chunk(&self, token_interval: &TokenInterval) -> (String, CharInterval) {
+        let tokens = &self.tokenized_text.tokens;
+        
+        if token_interval.start_index < tokens.len() && token_interval.end_index <= tokens.len() {
+            let start_token = &tokens[token_interval.start_index];
+            let end_token = &tokens[token_interval.end_index - 1];
+            
+            let start_char = start_token.char_interval.start_pos;
+            let end_char = end_token.char_interval.end_pos;
+            
+            let text = if let Some(ref doc) = self.document {
+                doc.text[start_char..end_char].to_string()
+            } else {
+                String::new()
+            };
+            
+            let interval = CharInterval {
+                start_pos: Some(start_char),
+                end_pos: Some(end_char),
+            };
+            
+            (text, interval)
+        } else {
+            (String::new(), CharInterval::new(None, None))
+        }
+    }
+
+    /// Create a token chunk with pre-computed text and interval.
+    fn make_precomputed_chunk(&self, token_interval: TokenInterval) -> TokenChunk {
+        let (text, interval) = self.precompute_chunk(&token_interval);
+        TokenChunk::with_precomputed(token_interval, self.document.clone(), text, interval)
+    }
+
     /// Create token chunk with proper text boundary handling to ensure no gaps
     fn create_adjacent_chunk(&self, token_interval: TokenInterval, next_chunk_start_token: Option<usize>) -> TokenChunk {
         if let Some(next_start) = next_chunk_start_token {
@@ -618,12 +695,40 @@ impl<'a> ChunkIterator<'a> {
                 // Extend this chunk to include whitespace up to the start of the next token
                 let next_token = &self.tokenized_text.tokens[next_start];
                 let custom_end = next_token.char_interval.start_pos;
-                return TokenChunk::with_char_end(token_interval, self.document.cloned(), custom_end);
+                
+                // Pre-compute the extended text
+                let tokens = &self.tokenized_text.tokens;
+                if token_interval.start_index < tokens.len() {
+                    let start_token = &tokens[token_interval.start_index];
+                    let start_char = start_token.char_interval.start_pos;
+                    let end_char = if let Some(ref doc) = self.document {
+                        std::cmp::min(custom_end, doc.text.len())
+                    } else {
+                        custom_end
+                    };
+                    
+                    let text = if let Some(ref doc) = self.document {
+                        doc.text[start_char..end_char].to_string()
+                    } else {
+                        String::new()
+                    };
+                    
+                    let interval = CharInterval {
+                        start_pos: Some(start_char),
+                        end_pos: Some(end_char),
+                    };
+                    
+                    return TokenChunk::with_precomputed_and_char_end(
+                        token_interval, self.document.clone(), text, interval, custom_end
+                    );
+                }
+                
+                return TokenChunk::with_char_end(token_interval, self.document.clone(), custom_end);
             }
         }
         
         // For the last chunk or when we can't determine the next token, use normal boundaries
-        TokenChunk::new(token_interval, self.document.cloned())
+        self.make_precomputed_chunk(token_interval)
     }
 }
 
@@ -663,7 +768,7 @@ impl<'a> Iterator for ChunkIterator<'a> {
                     Err(e) => return Some(Err(e)),
                 }
                 
-                return Some(Ok(TokenChunk::new(curr_chunk, self.document.cloned())));
+                return Some(Ok(self.make_precomputed_chunk(curr_chunk)));
             }
             Ok(false) => {}, // Continue with normal processing
             Err(e) => return Some(Err(e)),
@@ -710,7 +815,7 @@ impl<'a> Iterator for ChunkIterator<'a> {
                         Err(e) => return Some(Err(e)),
                     }
 
-                    return Some(Ok(TokenChunk::new(curr_chunk, self.document.cloned())));
+                    return Some(Ok(self.make_precomputed_chunk(curr_chunk)));
                 }
                 Ok(false) => {
                     curr_chunk = test_chunk;
@@ -758,7 +863,7 @@ impl<'a> Iterator for ChunkIterator<'a> {
             }
         }
 
-        Some(Ok(TokenChunk::new(curr_chunk, self.document.cloned())))
+        Some(Ok(self.make_precomputed_chunk(curr_chunk)))
     }
 }
 
@@ -1219,7 +1324,7 @@ mod tests {
 
         let token_interval = crate::tokenizer::TokenInterval::new(0, tokenized.tokens.len())
             .expect("Failed to create token interval");
-        let chunk = TokenChunk::new(token_interval, Some(document));
+        let chunk = TokenChunk::new(token_interval, Some(Arc::new(document)));
 
         // Test chunk text reconstruction
         let chunk_text = chunk.chunk_text(&tokenizer)
