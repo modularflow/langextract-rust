@@ -35,6 +35,12 @@ pub struct MultiPassConfig {
     pub max_reprocess_chunks: usize,
     /// Temperature adjustment for subsequent passes
     pub temperature_decay: f32,
+    /// Maximum characters per chunk for processing
+    pub max_char_buffer: usize,
+    /// Batch size for processing chunks
+    pub batch_length: usize,
+    /// Maximum number of concurrent workers
+    pub max_workers: usize,
 }
 
 impl Default for MultiPassConfig {
@@ -47,6 +53,9 @@ impl Default for MultiPassConfig {
             quality_threshold: 0.3,
             max_reprocess_chunks: 10,
             temperature_decay: 0.9,
+            max_char_buffer: 1000,
+            batch_length: 10,
+            max_workers: 10,
         }
     }
 }
@@ -153,9 +162,8 @@ impl MultiPassProcessor {
         };
 
         let all_scored_extractions: Vec<ScoredExtraction>;
-        let max_char_buffer = 2000; // This should come from config
-        
-        if text.len() <= max_char_buffer {
+
+        if text.len() <= self.config.max_char_buffer {
             // Single text processing with multi-pass
             all_scored_extractions = self.process_single_text_multipass(
                 text,
@@ -210,7 +218,7 @@ impl MultiPassProcessor {
             let pass_start = Instant::now();
             
             if debug {
-                println!("[multipass] pass {}/{}", pass_num, self.config.max_passes);
+                log::debug!("[multipass] pass {}/{}", pass_num, self.config.max_passes);
             }
 
             // For refinement passes, include context about previous findings
@@ -224,12 +232,12 @@ impl MultiPassProcessor {
             let result = self.annotator.annotate_text(
                 text,
                 &self.resolver,
-                2000, // max_char_buffer
-                1,    // batch_length  
+                self.config.max_char_buffer,
+                self.config.batch_length,
                 enhanced_context.as_deref(),
                 false, // Don't debug individual passes unless requested
                 1,     // extraction_passes (single pass per multi-pass iteration)
-                1,     // max_workers
+                self.config.max_workers,
             ).await?;
 
             // Score and collect new extractions
@@ -257,14 +265,14 @@ impl MultiPassProcessor {
             all_extractions.extend(pass_extractions);
 
             if debug {
-                println!("[multipass] pass {} found {} new extractions", 
+                log::debug!("[multipass] pass {} found {} new extractions",
                     pass_num, stats.extractions_per_pass.last().unwrap_or(&0));
             }
 
             // Early termination if no new extractions found
             if stats.extractions_per_pass.last() == Some(&0) {
                 if debug {
-                    println!("[multipass] no new extractions, stopping early");
+                    log::debug!("[multipass] no new extractions, stopping early");
                 }
                 break;
             }
@@ -293,7 +301,7 @@ impl MultiPassProcessor {
             let pass_start = Instant::now();
             
             if debug {
-                println!("[multipass] pass {}/{} -- {} chunks", 
+                log::debug!("[multipass] pass {}/{} -- {} chunks",
                     pass_num, self.config.max_passes, chunks_to_process.len());
             }
 
@@ -349,7 +357,7 @@ impl MultiPassProcessor {
             all_extractions.extend(pass_extractions);
 
             if debug {
-                println!("[multipass] pass {} found {} new extractions, {} chunks queued for reprocessing", 
+                log::debug!("[multipass] pass {} found {} new extractions, {} chunks queued for reprocessing",
                     pass_num, stats.extractions_per_pass.last().unwrap_or(&0),
                     stats.reprocessed_chunks_per_pass.last().unwrap_or(&0));
             }
@@ -361,7 +369,7 @@ impl MultiPassProcessor {
             if chunks_to_process.is_empty() 
                 || stats.extractions_per_pass.last() == Some(&0) {
                 if debug {
-                    println!("[multipass] no remaining chunks or extractions, stopping");
+                    log::debug!("[multipass] no remaining chunks or extractions, stopping");
                 }
                 break;
             }
@@ -399,7 +407,7 @@ impl MultiPassProcessor {
                 Ok(chunk_result) => chunk_results.push(chunk_result),
                 Err(e) => {
                     if debug {
-                        println!("[multipass] chunk processing failed: {}", e);
+                        log::warn!("[multipass] chunk processing failed: {}", e);
                     }
                 }
             }
@@ -417,7 +425,7 @@ impl MultiPassProcessor {
     ) -> LangExtractResult<ChunkResult> {
         let start_time = Instant::now();
 
-        match self.annotator.annotate_text(&chunk.text, &self.resolver, 2000, 1, additional_context, false, 1, 1).await {
+        match self.annotator.annotate_text(&chunk.text, &self.resolver, self.config.max_char_buffer, self.config.batch_length, additional_context, false, 1, self.config.max_workers).await {
             Ok(annotated_doc) => {
                 let mut extractions = annotated_doc.extractions.unwrap_or_default();
                 
@@ -575,34 +583,34 @@ impl MultiPassProcessor {
         }
 
         if debug {
-            println!("[multipass] {} extractions kept, {} filtered", 
+            log::debug!("[multipass] {} extractions kept, {} filtered",
                 deduplicated.len(), stats.quality_stats.filtered_count);
         }
 
         deduplicated
     }
 
-    /// Print multi-pass extraction summary
+    /// Log multi-pass extraction summary
     fn print_multipass_summary(&self, stats: &MultiPassStats) {
-        println!("[multipass] summary");
-        println!("  passes: {}", stats.total_passes);
-        println!("  time: {:?}", stats.total_time);
-        
+        log::info!("[multipass] summary");
+        log::info!("  passes: {}", stats.total_passes);
+        log::info!("  time: {:?}", stats.total_time);
+
         for (i, (&extractions, &time)) in stats.extractions_per_pass.iter()
             .zip(stats.time_per_pass.iter()).enumerate() {
             let reprocessed = stats.reprocessed_chunks_per_pass.get(i).unwrap_or(&0);
-            println!("  pass {}: {} extractions, {} reprocessed, {:?}", 
+            log::info!("  pass {}: {} extractions, {} reprocessed, {:?}",
                 i + 1, extractions, reprocessed, time);
         }
 
-        println!("  quality: avg={:.2}, high={}, medium={}, low={}, filtered={}",
+        log::info!("  quality: avg={:.2}, high={}, medium={}, low={}, filtered={}",
             stats.quality_stats.average_quality,
             stats.quality_stats.high_quality_count,
             stats.quality_stats.medium_quality_count,
             stats.quality_stats.low_quality_count,
             stats.quality_stats.filtered_count);
 
-        println!("  alignment: total={}, exact={}, fuzzy={}, rate={:.1}%",
+        log::info!("  alignment: total={}, exact={}, fuzzy={}, rate={:.1}%",
             stats.final_alignment_stats.total,
             stats.final_alignment_stats.exact,
             stats.final_alignment_stats.fuzzy,

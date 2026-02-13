@@ -278,7 +278,7 @@ pub struct TemplateBuilder {
     examples_section: String,
     context_section: String,
     input_section: String,
-    output_section: String,
+    _output_section: String,
     engine: TemplateEngine,
 }
 
@@ -300,7 +300,7 @@ impl TemplateBuilder {
                 "{input_text}",
                 TemplateFragments::output_header(format_type)
             ),
-            output_section: String::new(),
+            _output_section: String::new(),
             engine: TemplateEngine::lenient(),
         }
     }

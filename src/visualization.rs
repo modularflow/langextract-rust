@@ -289,7 +289,7 @@ struct LayeredSpan {
     class_name: String,
     text: String,
     step_index: usize,
-    parent_step_id: Option<String>,
+    _parent_step_id: Option<String>,
     parent_class: Option<String>,
     parent_text: Option<String>,
 }
@@ -315,7 +315,7 @@ fn build_layered_spans(pipeline_result: &PipelineResult, original_text: &str, ex
                             class_name: e.extraction_class.clone(),
                             text: e.extraction_text.clone(),
                             step_index,
-                            parent_step_id: e.attributes.as_ref().and_then(|m| m.get("parent_step_id")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            _parent_step_id: e.attributes.as_ref().and_then(|m| m.get("parent_step_id")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                             parent_class: e.attributes.as_ref().and_then(|m| m.get("parent_class")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                             parent_text: e.attributes.as_ref().and_then(|m| m.get("parent_text")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                         });
@@ -335,7 +335,7 @@ fn build_layered_spans(pipeline_result: &PipelineResult, original_text: &str, ex
                             class_name: e.extraction_class.clone(),
                             text: e.extraction_text.clone(),
                             step_index,
-                            parent_step_id: e.attributes.as_ref().and_then(|m| m.get("parent_step_id")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            _parent_step_id: e.attributes.as_ref().and_then(|m| m.get("parent_step_id")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                             parent_class: e.attributes.as_ref().and_then(|m| m.get("parent_class")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                             parent_text: e.attributes.as_ref().and_then(|m| m.get("parent_text")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                         });
@@ -385,7 +385,7 @@ fn build_layered_spans(pipeline_result: &PipelineResult, original_text: &str, ex
                                         class_name: class_name.clone(),
                                         text: s.clone(),
                                         step_index,
-                                        parent_step_id: parent_step_id.clone(),
+                                        _parent_step_id: parent_step_id.clone(),
                                         parent_class: e.attributes.as_ref().and_then(|m| m.get("parent_class")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                                         parent_text: e.attributes.as_ref().and_then(|m| m.get("parent_text")).and_then(|v| v.as_str()).map(|s| s.to_string()),
                                     });
@@ -492,7 +492,7 @@ fn highlight_text_html_with_layers(
     let mut cursor = 0usize;
     let mut open: Vec<usize> = Vec::new();
 
-    let mut push_plain = |from: usize, to: usize, out: &mut String| {
+    let push_plain = |from: usize, to: usize, out: &mut String| {
         if to > from {
             out.push_str(&html_escape(&text[from..to]));
         }

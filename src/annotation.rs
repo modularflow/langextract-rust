@@ -407,19 +407,11 @@ impl Annotator {
 
         // Handle multiple extraction passes
         if extraction_passes > 1 {
-            // Log a warning: the proper multi-pass path is via enable_multipass + MultiPassProcessor
-            report_progress(ProgressEvent::Debug {
-                operation: "multipass".to_string(),
-                details: format!(
-                    "extraction_passes={} requested but enable_multipass is not set. \
-                     Set enable_multipass=true in ExtractConfig to use the MultiPassProcessor \
-                     for actual multi-pass extraction. Returning single-pass results.",
-                    extraction_passes
-                ),
-            });
-            log::warn!(
-                "extraction_passes={} without enable_multipass=true has no effect. \
-                 Enable multi-pass via ExtractConfig::enable_multipass.",
+            // Note: when called via extract(), extraction_passes > 1 automatically routes
+            // to the MultiPassProcessor. This path is only reached via direct annotate_text() calls.
+            log::debug!(
+                "extraction_passes={} passed to annotate_text directly (multi-pass \
+                 logic is handled by MultiPassProcessor when using the extract() API)",
                 extraction_passes
             );
         }

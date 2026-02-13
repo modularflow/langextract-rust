@@ -56,6 +56,7 @@ config = "0.14"
 
 # Semantic chunking
 semchunk-rs = { version = "0.1.1", features = ["tiktoken-rs"] }
+tiktoken-rs = "0.6"
 
 # CLI dependencies (optional)
 clap = { version = "4.0", features = ["derive"], optional = true }

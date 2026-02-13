@@ -166,13 +166,13 @@ impl PipelineExecutor {
     pub async fn execute(&self, input_text: &str) -> LangExtractResult<PipelineResult> {
         let start_time = std::time::Instant::now();
 
-        println!("[pipeline] starting: {}", self.config.name);
-        println!("[pipeline] {}", self.config.description);
-        
+        log::info!("[pipeline] starting: {}", self.config.name);
+        log::info!("[pipeline] {}", self.config.description);
+
         if self.config.enable_parallel_execution {
-            println!("[pipeline] mode: parallel (independent steps run concurrently)");
+            log::info!("[pipeline] mode: parallel (independent steps run concurrently)");
         } else {
-            println!("[pipeline] mode: sequential");
+            log::info!("[pipeline] mode: sequential");
         }
 
         if self.config.enable_parallel_execution {
@@ -211,7 +211,7 @@ impl PipelineExecutor {
 
         let total_time = start_time.elapsed().as_millis() as u64;
 
-        println!("[pipeline] done in {}ms", total_time);
+        log::info!("[pipeline] done in {}ms", total_time);
 
         Ok(PipelineResult {
             config: self.config.clone(),
@@ -232,7 +232,7 @@ impl PipelineExecutor {
         let execution_waves = self.resolve_execution_waves()?;
         
         for (wave_index, wave_steps) in execution_waves.iter().enumerate() {
-            println!("[pipeline] wave {}: {} steps", wave_index + 1, wave_steps.len());
+            log::debug!("[pipeline] wave {}: {} steps", wave_index + 1, wave_steps.len());
             
             if wave_steps.len() == 1 {
                 // Single step - execute normally
@@ -251,7 +251,7 @@ impl PipelineExecutor {
                 }
             } else {
                 // Multiple independent steps - execute in parallel
-                println!("[pipeline] running {} steps in parallel", wave_steps.len());
+                log::debug!("[pipeline] running {} steps in parallel", wave_steps.len());
                 
                 let parallel_futures: Vec<_> = wave_steps.iter()
                     .map(|step_id| self.execute_step(step_id, input_text, &context_data))
@@ -283,7 +283,7 @@ impl PipelineExecutor {
 
         let total_time = start_time.elapsed().as_millis() as u64;
 
-        println!("[pipeline] done in {}ms", total_time);
+        log::info!("[pipeline] done in {}ms", total_time);
 
         Ok(PipelineResult {
             config: self.config.clone(),
@@ -396,19 +396,19 @@ impl PipelineExecutor {
 
         let step_start = std::time::Instant::now();
 
-        println!("[pipeline] step: {} ({})", step.name, step.id);
+        log::info!("[pipeline] step: {} ({})", step.name, step.id);
 
         // Determine input text for this step with mapping context
         let step_input = self.prepare_step_input(step, input_text, context_data)?;
         let input_count = step_input.len();
 
-        println!("[pipeline] processing {} input items", input_count);
+        log::debug!("[pipeline] processing {} input items", input_count);
 
         let mut all_extractions = Vec::new();
 
         // Process each input item
         for (i, input_item) in step_input.iter().enumerate() {
-            println!("[pipeline] item {}/{}", i + 1, input_count);
+            log::debug!("[pipeline] item {}/{}", i + 1, input_count);
 
             // Create extraction config for this step
             let step_config = self.config.global_config.clone();
@@ -493,7 +493,7 @@ impl PipelineExecutor {
                     }
                 }
                 Err(e) => {
-                    println!("[pipeline] step '{}' failed on item {}/{}: {}", step.id, i + 1, input_count, e);
+                    log::warn!("[pipeline] step '{}' failed on item {}/{}: {}", step.id, i + 1, input_count, e);
                     return Ok(StepResult {
                         step_id: step.id.clone(),
                         step_name: step.name.clone(),
@@ -509,7 +509,7 @@ impl PipelineExecutor {
 
         let processing_time = step_start.elapsed().as_millis() as u64;
 
-        println!("[pipeline] step '{}' done: {} extractions in {}ms",
+        log::info!("[pipeline] step '{}' done: {} extractions in {}ms",
                 step.name, all_extractions.len(), processing_time);
 
         Ok(StepResult {

@@ -70,13 +70,20 @@ impl TextAligner {
             source_text.to_lowercase()
         };
 
-        // Pre-compute source words and word set for fuzzy matching reuse
+        // Pre-compute source words and their byte offsets for fuzzy matching reuse
         let source_words: Vec<&str> = search_text.split_whitespace().collect();
+        let word_byte_offsets: Vec<(usize, usize)> = search_text
+            .split_whitespace()
+            .map(|word| {
+                let start = word.as_ptr() as usize - search_text.as_ptr() as usize;
+                (start, start + word.len())
+            })
+            .collect();
 
         let mut aligned_count = 0;
         for extraction in extractions.iter_mut() {
             if let Some(interval) = self.align_single_extraction_with_cache(
-                extraction, &search_text, &source_words, char_offset,
+                extraction, &search_text, &source_words, &word_byte_offsets, char_offset,
             )? {
                 extraction.char_interval = Some(interval);
                 aligned_count += 1;
@@ -92,6 +99,7 @@ impl TextAligner {
         extraction: &mut Extraction,
         search_text: &str,
         source_words: &[&str],
+        word_byte_offsets: &[(usize, usize)],
         char_offset: usize,
     ) -> LangExtractResult<Option<CharInterval>> {
         let extraction_text = if self.config.case_sensitive {
@@ -111,7 +119,7 @@ impl TextAligner {
 
         // Try fuzzy matching if enabled (reuse pre-computed source_words)
         if self.config.enable_fuzzy_alignment {
-            if let Some((start, end, status)) = self.find_fuzzy_match_with_words(&extraction_text, search_text, source_words) {
+            if let Some((start, end, status)) = self.find_fuzzy_match_with_words(&extraction_text, search_text, source_words, word_byte_offsets) {
                 extraction.alignment_status = Some(status);
                 return Ok(Some(CharInterval::new(
                     Some(start + char_offset),
@@ -138,8 +146,15 @@ impl TextAligner {
             source_text.to_lowercase()
         };
         let source_words: Vec<&str> = search_text.split_whitespace().collect();
+        let word_byte_offsets: Vec<(usize, usize)> = search_text
+            .split_whitespace()
+            .map(|word| {
+                let start = word.as_ptr() as usize - search_text.as_ptr() as usize;
+                (start, start + word.len())
+            })
+            .collect();
 
-        self.align_single_extraction_with_cache(extraction, &search_text, &source_words, char_offset)
+        self.align_single_extraction_with_cache(extraction, &search_text, &source_words, &word_byte_offsets, char_offset)
     }
 
     /// Find exact matches in the source text
@@ -179,12 +194,19 @@ impl TextAligner {
     #[allow(dead_code)]
     fn find_fuzzy_match(&self, extraction_text: &str, source_text: &str) -> Option<(usize, usize, AlignmentStatus)> {
         let source_words: Vec<&str> = source_text.split_whitespace().collect();
-        self.find_fuzzy_match_with_words(extraction_text, source_text, &source_words)
+        let word_byte_offsets: Vec<(usize, usize)> = source_text
+            .split_whitespace()
+            .map(|word| {
+                let start = word.as_ptr() as usize - source_text.as_ptr() as usize;
+                (start, start + word.len())
+            })
+            .collect();
+        self.find_fuzzy_match_with_words(extraction_text, source_text, &source_words, &word_byte_offsets)
     }
 
-    /// Find fuzzy matches using pre-computed source word list.
-    /// Avoids re-splitting and re-lowercasing the source text per extraction.
-    fn find_fuzzy_match_with_words(&self, extraction_text: &str, source_text: &str, source_words: &[&str]) -> Option<(usize, usize, AlignmentStatus)> {
+    /// Find fuzzy matches using pre-computed source word list and byte offsets.
+    /// Avoids re-splitting, re-lowercasing, and allocating join strings per extraction.
+    fn find_fuzzy_match_with_words(&self, extraction_text: &str, source_text: &str, source_words: &[&str], word_byte_offsets: &[(usize, usize)]) -> Option<(usize, usize, AlignmentStatus)> {
         let extraction_words: Vec<&str> = extraction_text.split_whitespace().collect();
 
         if extraction_words.is_empty() || source_words.is_empty() {
@@ -222,18 +244,13 @@ impl TextAligner {
             }
         }
 
-        // Convert word positions back to character positions
+        // Convert word positions back to character positions using pre-computed byte offsets
         if let Some((start_word_idx, end_word_idx, _)) = best_match {
-            let char_start = if start_word_idx == 0 {
-                0
-            } else {
-                source_words[..start_word_idx].join(" ").len() + 1
-            };
-
+            let char_start = word_byte_offsets[start_word_idx].0;
             let char_end = if end_word_idx >= source_words.len() {
                 source_text.len()
             } else {
-                source_words[..end_word_idx].join(" ").len()
+                word_byte_offsets[end_word_idx - 1].1
             };
 
             return Some((char_start, char_end, AlignmentStatus::MatchFuzzy));
@@ -261,30 +278,6 @@ impl TextAligner {
 
         // Calculate coverage: what percentage of extraction words are found
         found_count as f32 / words1.len() as f32
-    }
-
-    /// Calculate similarity between two word sequences using coverage-based similarity
-    /// (legacy method that lowercases internally, kept for backward compatibility)
-    fn calculate_word_similarity(&self, words1: &[&str], words2: &[&str]) -> f32 {
-        if words1.is_empty() && words2.is_empty() {
-            return 1.0;
-        }
-        if words1.is_empty() || words2.is_empty() {
-            return 0.0;
-        }
-
-        // Convert to lowercase for case-insensitive comparison
-        let normalized_words1: Vec<String> = words1.iter().map(|w| w.to_lowercase()).collect();
-        let normalized_words2: Vec<String> = words2.iter().map(|w| w.to_lowercase()).collect();
-
-        // Build HashSet for O(1) lookup instead of Vec::contains O(n)
-        let word_set2: std::collections::HashSet<&str> = normalized_words2.iter().map(|s| s.as_str()).collect();
-
-        // Count how many words from extraction are found in the source window
-        let found_count = normalized_words1.iter().filter(|w| word_set2.contains(w.as_str())).count();
-
-        // Calculate coverage: what percentage of extraction words are found
-        found_count as f32 / normalized_words1.len() as f32
     }
 
     /// Align extractions for chunked text processing

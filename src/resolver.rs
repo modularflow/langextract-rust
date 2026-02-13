@@ -199,18 +199,18 @@ impl TypeCoercer {
             return result;
         }
 
-        // 7. Try boolean (specific keywords)
-        if let Some(result) = self.try_coerce_boolean(field_name, trimmed_value) {
-            return result;
-        }
-
-        // 8. Try integer (before float to catch whole numbers)
+        // 7. Try integer (before boolean so "1"/"0" become integers, not booleans)
         if let Some(result) = self.try_coerce_integer(field_name, trimmed_value) {
             return result;
         }
 
-        // 9. Try float (more general numeric pattern)
+        // 8. Try float (more general numeric pattern)
         if let Some(result) = self.try_coerce_float(field_name, trimmed_value) {
+            return result;
+        }
+
+        // 9. Try boolean (keyword strings only, after numeric coercion)
+        if let Some(result) = self.try_coerce_boolean(field_name, trimmed_value) {
             return result;
         }
 
@@ -278,7 +278,7 @@ impl TypeCoercer {
     fn try_coerce_boolean(&self, field_name: &str, value: &str) -> Option<CoercionDetail> {
         let lower_value = value.to_lowercase();
         match lower_value.as_str() {
-            "true" | "yes" | "y" | "1" | "on" | "enabled" => Some(CoercionDetail {
+            "true" | "yes" | "y" | "on" | "enabled" => Some(CoercionDetail {
                 field_name: field_name.to_string(),
                 original_value: value.to_string(),
                 coerced_value: Some(Value::Bool(true)),
@@ -286,7 +286,7 @@ impl TypeCoercer {
                 success: true,
                 error_message: None,
             }),
-            "false" | "no" | "n" | "0" | "off" | "disabled" => Some(CoercionDetail {
+            "false" | "no" | "n" | "off" | "disabled" => Some(CoercionDetail {
                 field_name: field_name.to_string(),
                 original_value: value.to_string(),
                 coerced_value: Some(Value::Bool(false)),
@@ -1324,18 +1324,31 @@ mod tests {
                 Extraction::new("zero".to_string(), "0".to_string()),
             ];
             let expected_fields = vec!["active".to_string(), "enabled".to_string(), "disabled".to_string(), "off".to_string(), "binary".to_string(), "zero".to_string()];
-            
+
             let result = resolver.validate_extractions(&extractions, &expected_fields);
             assert!(result.is_valid);
-            
+
             let coercion_summary = result.coercion_summary.unwrap();
             assert_eq!(coercion_summary.successful_coercions, 6);
-            
+
             let active_coercion = coercion_summary.coercion_details.iter()
                 .find(|d| d.field_name == "active").unwrap();
             assert!(active_coercion.success);
             assert_eq!(active_coercion.target_type, CoercionTargetType::Boolean);
             assert_eq!(active_coercion.coerced_value.as_ref().unwrap().as_bool().unwrap(), true);
+
+            // "1" and "0" should now coerce to integers, not booleans
+            let binary_coercion = coercion_summary.coercion_details.iter()
+                .find(|d| d.field_name == "binary").unwrap();
+            assert!(binary_coercion.success);
+            assert_eq!(binary_coercion.target_type, CoercionTargetType::Integer);
+            assert_eq!(binary_coercion.coerced_value.as_ref().unwrap().as_i64().unwrap(), 1);
+
+            let zero_coercion = coercion_summary.coercion_details.iter()
+                .find(|d| d.field_name == "zero").unwrap();
+            assert!(zero_coercion.success);
+            assert_eq!(zero_coercion.target_type, CoercionTargetType::Integer);
+            assert_eq!(zero_coercion.coerced_value.as_ref().unwrap().as_i64().unwrap(), 0);
         }
 
         #[test]

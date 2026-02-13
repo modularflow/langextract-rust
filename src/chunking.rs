@@ -366,6 +366,7 @@ impl TextChunker {
             return Ok(vec![TextChunk::new(0, text.to_string(), 0, document_id)]);
         }
 
+        #[allow(deprecated)]
         match self.config.strategy {
             ChunkingStrategy::FixedSize => self.chunk_fixed_size(text, document_id),
             ChunkingStrategy::Sentence => self.chunk_by_sentences(text, document_id),
@@ -463,9 +464,13 @@ impl TextChunker {
 
     /// Semantic chunking using embeddings and content understanding
     fn chunk_semantic(&self, text: &str, document_id: Option<String>) -> LangExtractResult<Vec<TextChunk>> {
-        // Create a simple token counter (word-based for now)
-        // In a real implementation, you'd use tiktoken or similar for more accurate counting
-        let token_counter = Box::new(|s: &str| s.split_whitespace().count());
+        // Use tiktoken BPE tokenizer for accurate token counting (cl100k_base covers GPT-4/GPT-3.5)
+        let bpe = tiktoken_rs::cl100k_base().map_err(|e| {
+            crate::exceptions::LangExtractError::invalid_input(
+                &format!("Failed to initialize tiktoken tokenizer: {}", e)
+            )
+        })?;
+        let token_counter = Box::new(move |s: &str| bpe.encode_with_special_tokens(s).len());
 
         // Create the semantic chunker
         let chunker = Chunker::new(self.config.max_chunk_size, token_counter);
@@ -478,11 +483,22 @@ impl TextChunker {
         let mut current_pos = 0;
 
         for (chunk_id, chunk_text) in semantic_chunks.into_iter().enumerate() {
-            // Find the start position of this chunk in the original text
-            let start_pos = if let Some(found_pos) = text[current_pos..].find(&chunk_text) {
+            // semchunk-rs returns chunks in order and contiguously, so track cumulative offset.
+            // Fall back to find() if the chunk doesn't start at expected position (edge case
+            // with very small chunk sizes where the chunker may skip whitespace).
+            let start_pos = if text[current_pos..].starts_with(&chunk_text) {
+                current_pos
+            } else if let Some(found_pos) = text[current_pos..].find(&chunk_text) {
+                log::warn!(
+                    "Semantic chunk {} not contiguous at offset {}, found at {}",
+                    chunk_id, current_pos, current_pos + found_pos
+                );
                 current_pos + found_pos
             } else {
-                // If we can't find the exact chunk, use the current position
+                log::warn!(
+                    "Semantic chunk {} text not found at offset {}, using current position",
+                    chunk_id, current_pos
+                );
                 current_pos
             };
 
@@ -507,14 +523,13 @@ impl TextChunker {
         // Apply maximum chunks limit if specified
         let final_chunks = if let Some(max_chunks) = self.config.semantic_max_chunks {
             if chunks.len() > max_chunks {
-                // Merge excess chunks into the last chunk
+                // Merge excess chunks into the last chunk by slicing original text
                 let mut merged_chunks = chunks[..max_chunks-1].to_vec();
                 let remaining_chunks = &chunks[max_chunks-1..];
-                let merged_text = remaining_chunks.iter()
-                    .map(|c| c.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ");
                 let merged_start = remaining_chunks[0].char_offset;
+                let last = remaining_chunks.last().unwrap();
+                let merged_end = last.char_offset + last.char_length;
+                let merged_text = text[merged_start..merged_end].to_string();
                 let merged_chunk = TextChunk::new(
                     max_chunks - 1,
                     merged_text,
@@ -602,7 +617,6 @@ pub struct ChunkIterator<'a> {
     sentence_iter: SentenceIterator<'a>,
     broken_sentence: bool,
     document: Option<Arc<Document>>,
-    next_chunk_start_char: Option<usize>,
 }
 
 impl<'a> ChunkIterator<'a> {
@@ -622,7 +636,6 @@ impl<'a> ChunkIterator<'a> {
             sentence_iter,
             broken_sentence: false,
             document: document.map(|d| Arc::new(d.clone())),
-            next_chunk_start_char: Some(0),
         })
     }
 
@@ -688,48 +701,6 @@ impl<'a> ChunkIterator<'a> {
         TokenChunk::with_precomputed(token_interval, self.document.clone(), text, interval)
     }
 
-    /// Create token chunk with proper text boundary handling to ensure no gaps
-    fn create_adjacent_chunk(&self, token_interval: TokenInterval, next_chunk_start_token: Option<usize>) -> TokenChunk {
-        if let Some(next_start) = next_chunk_start_token {
-            if next_start < self.tokenized_text.tokens.len() {
-                // Extend this chunk to include whitespace up to the start of the next token
-                let next_token = &self.tokenized_text.tokens[next_start];
-                let custom_end = next_token.char_interval.start_pos;
-                
-                // Pre-compute the extended text
-                let tokens = &self.tokenized_text.tokens;
-                if token_interval.start_index < tokens.len() {
-                    let start_token = &tokens[token_interval.start_index];
-                    let start_char = start_token.char_interval.start_pos;
-                    let end_char = if let Some(ref doc) = self.document {
-                        std::cmp::min(custom_end, doc.text.len())
-                    } else {
-                        custom_end
-                    };
-                    
-                    let text = if let Some(ref doc) = self.document {
-                        doc.text[start_char..end_char].to_string()
-                    } else {
-                        String::new()
-                    };
-                    
-                    let interval = CharInterval {
-                        start_pos: Some(start_char),
-                        end_pos: Some(end_char),
-                    };
-                    
-                    return TokenChunk::with_precomputed_and_char_end(
-                        token_interval, self.document.clone(), text, interval, custom_end
-                    );
-                }
-                
-                return TokenChunk::with_char_end(token_interval, self.document.clone(), custom_end);
-            }
-        }
-        
-        // For the last chunk or when we can't determine the next token, use normal boundaries
-        self.make_precomputed_chunk(token_interval)
-    }
 }
 
 impl<'a> Iterator for ChunkIterator<'a> {

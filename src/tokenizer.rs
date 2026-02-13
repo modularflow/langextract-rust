@@ -25,14 +25,14 @@ pub enum TokenType {
 
 /// Represents a character interval in text
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CharInterval {
+pub struct TokenCharSpan {
     /// Starting character index (inclusive)
     pub start_pos: usize,
     /// Ending character index (exclusive)
     pub end_pos: usize,
 }
 
-impl CharInterval {
+impl TokenCharSpan {
     /// Create a new character interval
     pub fn new(start_pos: usize, end_pos: usize) -> Self {
         Self { start_pos, end_pos }
@@ -41,6 +41,12 @@ impl CharInterval {
     /// Get the length of the interval
     pub fn length(&self) -> usize {
         self.end_pos.saturating_sub(self.start_pos)
+    }
+}
+
+impl From<TokenCharSpan> for crate::data::CharInterval {
+    fn from(span: TokenCharSpan) -> Self {
+        crate::data::CharInterval::new(Some(span.start_pos), Some(span.end_pos))
     }
 }
 
@@ -77,7 +83,7 @@ pub struct Token {
     /// The type of the token
     pub token_type: TokenType,
     /// The character interval within the original text that this token spans
-    pub char_interval: CharInterval,
+    pub char_interval: TokenCharSpan,
     /// True if the token immediately follows a newline or carriage return
     pub first_token_after_newline: bool,
 }
@@ -87,7 +93,7 @@ impl Token {
     pub fn new(
         index: usize,
         token_type: TokenType,
-        char_interval: CharInterval,
+        char_interval: TokenCharSpan,
         first_token_after_newline: bool,
     ) -> Self {
         Self {
@@ -130,9 +136,9 @@ impl TokenizedText {
 
 /// Text tokenizer for splitting text into tokens
 pub struct Tokenizer {
-    letters_pattern: Regex,
+    _letters_pattern: Regex,
     digits_pattern: Regex,
-    symbols_pattern: Regex,
+    _symbols_pattern: Regex,
     slash_abbrev_pattern: Regex,
     token_pattern: Regex,
     word_pattern: Regex,
@@ -182,9 +188,9 @@ impl Tokenizer {
         .collect();
 
         Ok(Self {
-            letters_pattern,
+            _letters_pattern: letters_pattern,
             digits_pattern,
-            symbols_pattern,
+            _symbols_pattern: symbols_pattern,
             slash_abbrev_pattern,
             token_pattern,
             word_pattern,
@@ -217,7 +223,7 @@ impl Tokenizer {
             let token = Token::new(
                 token_index,
                 token_type,
-                CharInterval::new(start_pos, end_pos),
+                TokenCharSpan::new(start_pos, end_pos),
                 first_token_after_newline,
             );
 

@@ -97,7 +97,7 @@ use std::collections::HashMap;
 /// Configuration for the extract function
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ExtractConfig {
-    /// The model ID to use (e.g., "gemini-2.5-flash", "gpt-4o")
+    /// The model ID to use (e.g., "gpt-4o-mini", "gpt-4o")
     pub model_id: String,
     /// API key for the language model service
     pub api_key: Option<String>,
@@ -141,7 +141,7 @@ pub struct ExtractConfig {
 impl Default for ExtractConfig {
     fn default() -> Self {
         Self {
-            model_id: "gemini-2.5-flash".to_string(),
+            model_id: "gpt-4o-mini".to_string(),
             api_key: None,
             format_type: FormatType::Json,
             max_char_buffer: 1000,
@@ -318,8 +318,8 @@ pub async fn extract(
             .map(|v| v as usize),
     );
 
-    // Perform annotation - use multi-pass if enabled
-    if config.enable_multipass && config.extraction_passes > 1 {
+    // Perform annotation - use multi-pass if enabled or extraction_passes > 1
+    if config.enable_multipass || config.extraction_passes > 1 {
         // Use multi-pass extraction
         let multipass_config = multipass::MultiPassConfig {
             max_passes: config.extraction_passes,
@@ -329,6 +329,9 @@ pub async fn extract(
             quality_threshold: config.multipass_quality_threshold,
             max_reprocess_chunks: 10,
             temperature_decay: 0.9,
+            max_char_buffer: config.max_char_buffer,
+            batch_length: config.batch_length,
+            max_workers: config.max_workers,
         };
 
         let processor = multipass::MultiPassProcessor::new(
@@ -381,7 +384,7 @@ mod tests {
     #[test]
     fn test_extract_config_default() {
         let config = ExtractConfig::default();
-        assert_eq!(config.model_id, "gemini-2.5-flash");
+        assert_eq!(config.model_id, "gpt-4o-mini");
         assert_eq!(config.format_type, FormatType::Json);
         assert_eq!(config.max_char_buffer, 1000);
         assert_eq!(config.temperature, 0.5);

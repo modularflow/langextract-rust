@@ -274,26 +274,16 @@ impl ProgressHandler for LogProgressHandler {
 }
 
 /// Global progress handler
-static mut PROGRESS_HANDLER: Option<Arc<dyn ProgressHandler>> = None;
-static INIT: std::sync::Once = std::sync::Once::new();
+static PROGRESS_HANDLER: std::sync::OnceLock<Arc<dyn ProgressHandler>> = std::sync::OnceLock::new();
 
 /// Initialize the global progress handler
 pub fn init_progress_handler(handler: Arc<dyn ProgressHandler>) {
-    unsafe {
-        PROGRESS_HANDLER = Some(handler);
-    }
+    let _ = PROGRESS_HANDLER.set(handler);
 }
 
 /// Get the current progress handler, or create a default one
 fn get_progress_handler() -> Arc<dyn ProgressHandler> {
-    unsafe {
-        PROGRESS_HANDLER.clone().unwrap_or_else(|| {
-            INIT.call_once(|| {
-                PROGRESS_HANDLER = Some(Arc::new(ConsoleProgressHandler::new()));
-            });
-            PROGRESS_HANDLER.clone().unwrap()
-        })
-    }
+    PROGRESS_HANDLER.get_or_init(|| Arc::new(ConsoleProgressHandler::new())).clone()
 }
 
 /// Report a progress event
