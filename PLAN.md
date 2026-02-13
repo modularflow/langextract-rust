@@ -1,7 +1,36 @@
 # langextract-rust: Cross-Referenced Assessment & Remaining Work Plan
 
-**Date:** 2026-02-12  
+**Date:** 2026-02-12 (updated 2026-02-13)  
 **Based on:** Full source audit + two independent LLM reviews + project SPEC.md
+
+---
+
+## Implementation Status
+
+### Phase 1 — Correctness: COMPLETE
+
+All six correctness bugs have been fixed:
+
+| Item | Description | Status |
+|------|-------------|--------|
+| 1.1 | Wire tiktoken into semantic chunking | **Done.** `chunking.rs` uses `tiktoken_rs::cl100k_base()` with BPE `encode_with_special_tokens` |
+| 1.2 | Fix semantic chunk position tracking | **Done.** Uses cumulative `current_pos` with `starts_with` check and `log::warn!` fallback |
+| 1.3 | Fix semantic chunk merging offsets | **Done.** Builds merged text via `text[merged_start..merged_end]` from original source |
+| 1.4 | Fix fuzzy alignment char-position reconstruction | **Done.** Pre-computes `word_byte_offsets` from pointer arithmetic; fuzzy path uses them directly |
+| 1.5 | Fix type coercion order | **Done.** Integer (step 7) before boolean (step 9); boolean only matches keyword strings |
+| 1.6 | Multipass uses user config | **Done.** `ExtractConfig` fields wired through to `MultiPassConfig` |
+
+### Phase 2 — Code Quality & API Hygiene: COMPLETE
+
+All five hygiene items have been addressed:
+
+| Item | Description | Status |
+|------|-------------|--------|
+| 2.1 | Route println! through logging | **Done.** No `println!` in `multipass.rs` or `pipeline.rs`; remaining in `logging.rs` (ConsoleProgressHandler, intentional) and `chunking.rs` (tests only) |
+| 2.2 | Unify multi-pass API | **Done.** Removed `extraction_passes` field. Single switch: `enable_multipass: bool` + `multipass_max_passes: usize` (default 2). Routing simplified to `if config.enable_multipass`. `extraction_passes` param removed from `annotate_text` and all downstream methods. CLI `--passes N` auto-enables multipass when N > 1. |
+| 2.3 | Unify CharInterval types | **Done.** `tokenizer.rs` has `TokenCharSpan` (plain `usize`) with `From<TokenCharSpan> for CharInterval` |
+| 2.4 | Remove dead code | **Done.** Deleted `http_client.rs` (~340 lines), removed `find_fuzzy_match` wrapper from `alignment.rs`, removed unused `format_type`/`fence_output` fields and dead `parse_response`/`parse_json_response`/`parse_single_item` from `annotation.rs`. Zero `#[allow(dead_code)]` remaining. ~456 lines removed total. |
+| 2.5 | Default model_id | **Done.** Defaults to `"gpt-4o-mini"` with working OpenAI provider |
 
 ---
 
@@ -11,11 +40,11 @@
 
 | Issue | Review A | Review B | Actual Code State |
 |-------|----------|----------|-------------------|
-| tiktoken not wired into semantic chunking | "not yet fully utilized" | "your own tokenizer—not model-specific token counting" | **Confirmed.** `chunking.rs:468` uses `split_whitespace().count()` despite `tiktoken-rs` feature in Cargo.toml |
-| println! bypasses logging | Mentioned under observability | "library code doing println! debugging in resolver/multipass paths" | **Confirmed.** 13 in multipass.rs, 17 in pipeline.rs, all hardcoded |
-| Multi-pass API confusion | "move beyond first-pass-wins" | "TODO gap / unify multi-pass story" | **Confirmed.** TODO replaced with log::warn but two paths still exist; dedup is exact-text-match only |
-| Consensus merging absent | Suggests majority vote | Suggests vote counts + tie-breaking | **Confirmed.** `filter_and_deduplicate_extractions` uses HashSet of normalized text—first-seen wins, no voting |
-| Streaming API absent | "architecturally complex, low priority" | "straightforward if chunking is refactored to indices" | **Confirmed.** `aggregate_chunk_results` collects everything before returning |
+| tiktoken not wired into semantic chunking | "not yet fully utilized" | "your own tokenizer—not model-specific token counting" | **Fixed.** `chunking.rs` now uses `tiktoken_rs::cl100k_base()` BPE tokenizer |
+| println! bypasses logging | Mentioned under observability | "library code doing println! debugging in resolver/multipass paths" | **Fixed.** `println!` removed from library code paths |
+| Multi-pass API confusion | "move beyond first-pass-wins" | "TODO gap / unify multi-pass story" | **Fixed.** Unified to single `enable_multipass` switch; `extraction_passes` removed |
+| Consensus merging absent | Suggests majority vote | Suggests vote counts + tie-breaking | **Still open.** `filter_and_deduplicate_extractions` uses HashSet of normalized text—first-seen wins, no voting |
+| Streaming API absent | "architecturally complex, low priority" | "straightforward if chunking is refactored to indices" | **Still open.** `aggregate_chunk_results` collects everything before returning |
 
 ### Disagreement Points
 
@@ -29,172 +58,37 @@
 
 ### What Both Reviews Miss
 
-These are real issues I found in the codebase that neither review flags:
+Issues found in the codebase that neither review flags (status updated):
 
-1. **Fuzzy alignment char-position reconstruction is broken** (`alignment.rs:230,236`): `source_words[..idx].join(" ")` assumes single-space separation. If the original text has tabs, newlines, or multiple spaces, the returned character positions are wrong. Also allocates throwaway strings on every fuzzy match.
+1. ~~**Fuzzy alignment char-position reconstruction is broken**~~ → **Fixed (1.4)**
 
-2. **Semantic chunk position tracking uses String::find with silent fallback** (`chunking.rs:482-486`): If the same text appears twice, the second chunk gets the first's offset. The fallback (`current_pos`) is wrong but produces no warning.
+2. ~~**Semantic chunk position tracking uses String::find with silent fallback**~~ → **Fixed (1.2)**
 
-3. **Semantic chunk merging corrupts offsets** (`chunking.rs:513-516`): `.join(" ")` introduces spaces not in the original text, so merged chunk text no longer maps to stated character offsets.
+3. ~~**Semantic chunk merging corrupts offsets**~~ → **Fixed (1.3)**
 
-4. **Duplicate `CharInterval` types** (`data.rs:26` vs `tokenizer.rs:28`): One with `Option<usize>`, one with plain `usize`. Forces manual conversion in chunking.rs.
+4. ~~**Duplicate `CharInterval` types**~~ → **Fixed (2.3).** Renamed to `TokenCharSpan` with `From` impl.
 
-5. **HttpClient is dead code** — `UniversalProvider` creates its own `reqwest::Client` and has its own retry logic. `HttpClient` in `http_client.rs` is never used by anything.
+5. ~~**HttpClient is dead code**~~ → **Fixed (2.4).** Deleted entirely.
 
-6. **multipass hardcodes `max_char_buffer=2000`, `batch_length=1`, `max_workers=1`** (`multipass.rs:228-232`): Completely ignores user's ExtractConfig values. Multi-pass always runs single-threaded regardless of config.
+6. ~~**multipass hardcodes chunking params**~~ → **Fixed (1.6)**
 
-7. **Type coercion: `"1"` → `true`, `"0"` → `false`** (`resolver.rs:281`): Boolean matching includes `"1"` and `"0"`. Since boolean is checked before integer (line 203 vs 208), the value `"1"` becomes `true` instead of integer `1`.
+7. ~~**Type coercion: `"1"` → `true`, `"0"` → `false`**~~ → **Fixed (1.5)**
 
 ---
 
 ## Part 2: What Remains To Be Coded — Prioritized Plan
 
-### Tier 1: Correctness Bugs (These produce wrong results now)
+### ~~Tier 1: Correctness Bugs~~ — ALL COMPLETE
 
-#### 1.1 Wire tiktoken into semantic chunking
-**File:** `chunking.rs:465-468`  
-**Problem:** Word-count proxy means chunks can exceed LLM context windows.  
-**Change:** Replace the closure with actual tiktoken BPE counting. The `semchunk-rs` crate already has `tiktoken-rs` as a feature (enabled in Cargo.toml). Need to instantiate the correct tokenizer for the model being used (cl100k_base for GPT-4, etc.) and pass it as the counter.
+All six correctness bugs (1.1–1.6) have been fixed. See status table above.
 
-```rust
-// Current (broken):
-let token_counter = Box::new(|s: &str| s.split_whitespace().count());
+### ~~Tier 2: Code Quality & API Hygiene~~ — ALL COMPLETE
 
-// Target:
-let bpe = tiktoken_rs::cl100k_base().unwrap(); // or model-specific
-let token_counter = Box::new(move |s: &str| bpe.encode_with_special_tokens(s).len());
-```
-
-**Scope:** ~20 lines changed in `chunk_semantic()`, plus adding a `model_tokenizer` field to `TextChunker` config so the correct BPE is selected based on provider.
-
-#### 1.2 Fix semantic chunk position tracking
-**File:** `chunking.rs:480-499`  
-**Problem:** Uses `String::find()` to locate chunks in source text. Duplicate text gets wrong offsets. Fallback is silently wrong.  
-**Change:** Track cumulative byte offset. `semchunk-rs` returns chunks in order and contiguously.
-
-```rust
-// Current (broken):
-let start_pos = if let Some(found_pos) = text[current_pos..].find(&chunk_text) {
-    current_pos + found_pos
-} else {
-    current_pos  // ← silent wrong position
-};
-
-// Target:
-let start_pos = current_pos;
-// Verify alignment (log warning if mismatch):
-debug_assert!(text[start_pos..].starts_with(&chunk_text),
-    "Semantic chunk text doesn't match source at offset {}", start_pos);
-```
-
-**Scope:** ~10 lines.
-
-#### 1.3 Fix semantic chunk merging offset corruption
-**File:** `chunking.rs:508-524`  
-**Problem:** `.join(" ")` inserts spaces not in the original text.  
-**Change:** Slice the original text from first-remaining-chunk start to last-remaining-chunk end.
-
-```rust
-// Current (broken):
-let merged_text = remaining_chunks.iter()
-    .map(|c| c.text.as_str())
-    .collect::<Vec<_>>()
-    .join(" ");
-
-// Target:
-let merged_start = remaining_chunks[0].char_offset;
-let last = remaining_chunks.last().unwrap();
-let merged_end = last.char_offset + last.char_length;
-let merged_text = text[merged_start..merged_end].to_string();
-```
-
-**Scope:** ~8 lines.
-
-#### 1.4 Fix fuzzy alignment char-position reconstruction
-**File:** `alignment.rs:226-237`  
-**Problem:** `source_words[..idx].join(" ")` assumes single-space separation. Returns wrong positions on multi-space/tab/newline text. Allocates throwaway strings.  
-**Change:** Pre-compute word byte offsets during the `split_whitespace` step and look them up directly.
-
-```rust
-// In align_extractions, alongside source_words:
-let word_byte_offsets: Vec<(usize, usize)> = search_text
-    .split_whitespace()
-    .map(|word| {
-        let start = word.as_ptr() as usize - search_text.as_ptr() as usize;
-        (start, start + word.len())
-    })
-    .collect();
-
-// Then in find_fuzzy_match_with_words, replace join():
-let char_start = word_byte_offsets[start_word_idx].0;
-let char_end = word_byte_offsets[end_word_idx - 1].1;
-```
-
-**Scope:** ~15 lines changed across two methods.
-
-#### 1.5 Fix type coercion order
-**File:** `resolver.rs:155-221`  
-**Problem:** Boolean coercion matches `"1"/"0"` before integer coercion.  
-**Change:** Move integer/float coercion before boolean, or make boolean only match keyword strings ("true"/"false"/"yes"/"no"), not numeric values.
-
-```rust
-// Current order (broken):  ...date → currency → boolean → integer → float
-// Target order:             ...date → currency → integer → float → boolean
-// AND: remove "1"/"0" from boolean matches
-```
-
-**Scope:** ~10 lines reordered + boolean match arms trimmed.
-
-#### 1.6 Multipass ignores user config for chunking params
-**File:** `multipass.rs:224-233`  
-**Problem:** Hardcoded `max_char_buffer=2000`, `batch_length=1`, `max_workers=1`.  
-**Change:** Thread relevant `ExtractConfig` fields into `MultiPassProcessor` or `MultiPassConfig`.
-
-**Scope:** ~20 lines: add fields to `MultiPassConfig`, wire from `lib.rs:324-331`.
+All five hygiene items (2.1–2.5) have been addressed. See status table above.
 
 ---
 
-### Tier 2: Code Quality & API Hygiene (Users hit these as friction)
-
-#### 2.1 Route all println! through logging system
-**Files:** `multipass.rs` (13 calls), `pipeline.rs` (17 calls)  
-**Problem:** Library consumers cannot silence output.  
-**Change:** Replace `println!("[multipass] ...")` with `report_progress(ProgressEvent::Debug { ... })` and `println!("[pipeline] ...")` similarly.
-
-**Scope:** ~60 line changes (mechanical find/replace with formatting adjustments).
-
-#### 2.2 Unify multi-pass API
-**Files:** `annotation.rs:408-425`, `lib.rs:322-366`  
-**Problem:** `extraction_passes > 1` without `enable_multipass = true` logs a warning but does nothing. Two config knobs for one feature.  
-**Change:** Option A (recommended): Remove `extraction_passes` from `ExtractConfig`. If `enable_multipass` is true, use `MultiPassConfig.max_passes`. If false, single pass. One knob, one behavior.  
-Option B: If `extraction_passes > 1`, automatically enable multi-pass routing (treat the two flags as an OR).
-
-**Scope:** ~30 lines across lib.rs, annotation.rs, config.
-
-#### 2.3 Unify CharInterval types
-**Files:** `data.rs:26`, `tokenizer.rs:28`  
-**Problem:** Two structs with the same name, different field types.  
-**Change:** Rename `tokenizer::CharInterval` to `TokenCharSpan` (or `ByteSpan`), make it hold plain `usize` values. Keep `data::CharInterval` as the public API type with `Option<usize>`. Add a `From` impl.
-
-**Scope:** ~20 lines + grep/replace through chunking.rs.
-
-#### 2.4 Remove dead code
-- **`http_client.rs`**: Entire module unused. `UniversalProvider` has its own client + retry. Either delete or refactor `UniversalProvider` to use it.  
-- **`alignment.rs:179-183`**: `find_fuzzy_match` (non-cached version) is `#[allow(dead_code)]`.  
-- **`annotation.rs:518-612`**: `parse_response`, `parse_json_response`, `parse_single_item` are all `#[allow(dead_code)]` — the resolver handles parsing now.
-
-**Scope:** Delete ~300 lines or consolidate retry logic into HttpClient.
-
-#### 2.5 Default model_id should work out of box
-**File:** `lib.rs:144`  
-**Problem:** Default is `"gemini-2.5-flash"` but no Gemini provider exists.  
-**Change:** Either add a Gemini provider (Tier 3) or change default to an existing provider. Pragmatic option: default to `"gpt-4o-mini"` with `ProviderType::OpenAI` since that provider works.
-
-**Scope:** 1 line (temporary) or a full provider implementation (Tier 3).
-
----
-
-### Tier 3: Performance & Feature Improvements (Real but lower priority than correctness)
+### Tier 3: Performance & Feature Improvements (Next up)
 
 #### 3.1 Zero-copy TextChunk representation
 **File:** `chunking.rs` (TextChunk struct + chunk_semantic + process_token_chunked_text)  
@@ -244,7 +138,7 @@ struct MergeCandidate {
 
 #### 3.3 Add Gemini provider
 **Files:** New `providers/gemini.rs` + modifications to `factory.rs`, `providers/mod.rs`  
-**Problem:** Default model has no provider. The Python library's core value prop is Gemini's controlled generation.  
+**Problem:** The Python library's core value prop is Gemini's controlled generation.  
 **Key feature:** `response_mime_type: "application/json"` + `response_schema` in `generationConfig`. This gives structurally guaranteed JSON output, reducing parse failures.
 
 **Scope:** ~250 lines for provider + ~30 lines for factory wiring.
@@ -278,7 +172,7 @@ struct MergeCandidate {
 | Anthropic provider | Native Claude API support | After Gemini provider pattern established |
 | Custom provider | Wire the stub that currently returns error | Small lift, enables vLLM/LiteLLM |
 | Streaming API | `Stream<Item = ChunkResult>` | After zero-copy chunking refactor |
-| PyO3 bindings | Python wrapper around core | After all Tier 1-2 bugs fixed |
+| PyO3 bindings | Python wrapper around core | After all Tier 1-2 bugs fixed ✅ |
 | N-API bindings | Node.js wrapper | After PyO3 validates the FFI boundary design |
 | Rate limiting | Semaphore per provider for cloud APIs | When concurrent chunk processing is actually used at scale |
 | Aho-Corasick prefilter | Batch exact-match before fuzzy | Only if benchmarks show alignment is a bottleneck |
@@ -288,22 +182,22 @@ struct MergeCandidate {
 ## Part 3: Recommended Execution Order
 
 ```
-Phase 1 — Correctness (est. 1-2 days)
-├── 1.1  Wire tiktoken into semantic chunking
-├── 1.2  Fix semantic chunk position tracking  
-├── 1.3  Fix semantic chunk merging offsets
-├── 1.4  Fix fuzzy alignment char-position reconstruction
-├── 1.5  Fix type coercion order
-└── 1.6  Thread config into multipass chunking params
+Phase 1 — Correctness ✅ COMPLETE
+├── 1.1  Wire tiktoken into semantic chunking ✅
+├── 1.2  Fix semantic chunk position tracking ✅
+├── 1.3  Fix semantic chunk merging offsets ✅
+├── 1.4  Fix fuzzy alignment char-position reconstruction ✅
+├── 1.5  Fix type coercion order ✅
+└── 1.6  Thread config into multipass chunking params ✅
 
-Phase 2 — Hygiene (est. 1 day)
-├── 2.1  Route println! through logging (multipass + pipeline)
-├── 2.2  Unify multi-pass API (remove extraction_passes flag)
-├── 2.3  Unify CharInterval types  
-├── 2.4  Remove dead code (http_client, dead_code fns)
-└── 2.5  Fix default model_id
+Phase 2 — Hygiene ✅ COMPLETE
+├── 2.1  Route println! through logging (multipass + pipeline) ✅
+├── 2.2  Unify multi-pass API (remove extraction_passes flag) ✅
+├── 2.3  Unify CharInterval types ✅
+├── 2.4  Remove dead code (http_client, dead_code fns) ✅
+└── 2.5  Fix default model_id ✅
 
-Phase 3 — Performance foundations (est. 2-3 days)
+Phase 3 — Performance foundations (est. 2-3 days)       ← YOU ARE HERE
 ├── 3.4  Add tracing instrumentation (do this FIRST to measure)
 ├── 3.5  Benchmark suite (establish baselines)
 ├── 3.1  Zero-copy TextChunk (measure improvement with benchmarks)
@@ -316,10 +210,10 @@ Phase 4 — Provider expansion (est. 3-4 days)
 
 Phase 5 — Ecosystem (est. 1-2 weeks)
 ├── Streaming API
-├── PyO3 bindings  
+├── PyO3 bindings
 └── N-API bindings
 ```
 
 ### Key Principle
 
-Phases 1 and 2 should be completed before any performance work. Every Tier 3 optimization is meaningless if the library returns wrong character offsets, silently loses extractions from merged chunks, or coerces "1" to `true` instead of an integer. Fix correctness, then measure, then optimize.
+Phases 1 and 2 are complete. The library now returns correct character offsets, properly merges chunks, coerces types in the right order, and has a clean single-knob multipass API with no dead code. Phase 3 should start with tracing and benchmarks to establish baselines before optimizing.

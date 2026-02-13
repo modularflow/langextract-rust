@@ -124,8 +124,8 @@ mod cli {
         #[arg(long)]
         pub multipass: bool,
 
-        /// Number of extraction passes
-        #[arg(long, default_value = "1")]
+        /// Number of extraction passes (implies --multipass if > 1)
+        #[arg(long, default_value = "2")]
         pub passes: usize,
 
         /// Show character intervals in output
@@ -357,8 +357,8 @@ mod cli {
             max_workers: args.workers,
             batch_length: args.batch_size,
             temperature: args.temperature,
-            enable_multipass: args.multipass,
-            extraction_passes: args.passes,
+            enable_multipass: args.multipass || args.passes > 1,
+            multipass_max_passes: args.passes,
             debug: args.debug || verbose,
             additional_context: args.context.clone(),
             ..Default::default()

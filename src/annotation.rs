@@ -3,7 +3,7 @@
 use crate::{
     alignment::TextAligner,
     chunking::{ChunkResult, ResultAggregator, TextChunk, TokenChunk, ChunkIterator},
-    data::{AnnotatedDocument, Extraction, FormatType, Document},
+    data::{AnnotatedDocument, Extraction, Document},
     exceptions::LangExtractResult,
     inference::BaseLanguageModel,
     logging::{report_progress, ProgressEvent},
@@ -19,10 +19,6 @@ use std::time::Instant;
 pub struct Annotator {
     language_model: Box<dyn BaseLanguageModel>,
     prompt_template: PromptTemplateStructured,
-    #[allow(dead_code)]
-    format_type: FormatType,
-    #[allow(dead_code)]
-    fence_output: bool,
     /// Sampling temperature for LLM inference (from user config)
     temperature: f32,
     /// Maximum output tokens for LLM inference (from user config or estimated)
@@ -36,8 +32,6 @@ impl Annotator {
     pub fn new(
         language_model: Box<dyn BaseLanguageModel>,
         prompt_template: PromptTemplateStructured,
-        format_type: FormatType,
-        fence_output: bool,
     ) -> Self {
         // Pre-compute expected fields from examples (fixes issue 6.8)
         let expected_fields: Vec<String> = prompt_template.examples
@@ -54,8 +48,6 @@ impl Annotator {
         Self {
             language_model,
             prompt_template,
-            format_type,
-            fence_output,
             temperature: 0.5,
             max_output_tokens: estimated_max_tokens,
             expected_fields,
@@ -66,8 +58,6 @@ impl Annotator {
     pub fn with_config(
         language_model: Box<dyn BaseLanguageModel>,
         prompt_template: PromptTemplateStructured,
-        format_type: FormatType,
-        fence_output: bool,
         temperature: f32,
         max_output_tokens: Option<usize>,
     ) -> Self {
@@ -87,8 +77,6 @@ impl Annotator {
         Self {
             language_model,
             prompt_template,
-            format_type,
-            fence_output,
             temperature,
             max_output_tokens: computed_max_tokens,
             expected_fields,
@@ -104,7 +92,6 @@ impl Annotator {
         batch_length: usize,
         additional_context: Option<&str>,
         debug: bool,
-        extraction_passes: usize,
         max_workers: usize,
     ) -> LangExtractResult<AnnotatedDocument> {
         // Check if we need to chunk the text
@@ -129,7 +116,6 @@ impl Annotator {
             batch_length,
             additional_context,
             debug,
-            extraction_passes,
             max_workers,
         ).await
     }
@@ -287,7 +273,6 @@ impl Annotator {
         batch_length: usize,
         additional_context: Option<&str>,
         debug: bool,
-        extraction_passes: usize,
         max_workers: usize,
     ) -> LangExtractResult<AnnotatedDocument> {
         // Create tokenizer and tokenize the text
@@ -351,7 +336,6 @@ impl Annotator {
             batch_length,
             additional_context,
             debug,
-            extraction_passes,
             max_workers,
         ).await
     }
@@ -365,7 +349,6 @@ impl Annotator {
         _batch_length: usize,
         additional_context: Option<&str>,
         debug: bool,
-        extraction_passes: usize,
         max_workers: usize,
     ) -> LangExtractResult<AnnotatedDocument> {
         let total_chunks = chunks.len();
@@ -403,17 +386,6 @@ impl Annotator {
                 operation: "batch_processing".to_string(),
                 details: format!("All {}/{} chunks processed", collected_results.len(), total_chunks),
             });
-        }
-
-        // Handle multiple extraction passes
-        if extraction_passes > 1 {
-            // Note: when called via extract(), extraction_passes > 1 automatically routes
-            // to the MultiPassProcessor. This path is only reached via direct annotate_text() calls.
-            log::debug!(
-                "extraction_passes={} passed to annotate_text directly (multi-pass \
-                 logic is handled by MultiPassProcessor when using the extract() API)",
-                extraction_passes
-            );
         }
 
         // Aggregate results
@@ -506,100 +478,4 @@ impl Annotator {
         self.prompt_template.render(text, additional_context)
     }
 
-    /// Parse the model response into extractions
-    #[allow(dead_code)]
-    fn parse_response(&self, response: &str) -> LangExtractResult<Vec<Extraction>> {
-        // Try to parse as JSON first
-        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(response) {
-            return self.parse_json_response(&json_value);
-        }
-
-        // If that fails, try to extract JSON from the response (in case it's wrapped)
-        if let Some(json_start) = response.find('{') {
-            if let Some(json_end) = response.rfind('}') {
-                let json_str = &response[json_start..=json_end];
-                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    return self.parse_json_response(&json_value);
-                }
-            }
-        }
-
-        Err(crate::exceptions::LangExtractError::parsing(
-            format!("Could not parse response as JSON: {}", response)
-        ))
-    }
-
-    /// Parse JSON response into extractions
-    #[allow(dead_code)]
-    fn parse_json_response(&self, json: &serde_json::Value) -> LangExtractResult<Vec<Extraction>> {
-        let mut extractions = Vec::new();
-
-        // Handle array at top level: [{"name": "John", "age": "25"}, ...]
-        if let Some(array) = json.as_array() {
-            for (index, item) in array.iter().enumerate() {
-                extractions.extend(self.parse_single_item(item, Some(index))?);
-            }
-            return Ok(extractions);
-        }
-
-        // Handle object with data field: {"data": [{"name": "John"}, ...]}
-        if let Some(obj) = json.as_object() {
-            // Check for common wrapper fields
-            if let Some(data_array) = obj.get("data").and_then(|v| v.as_array()) {
-                for (index, item) in data_array.iter().enumerate() {
-                    extractions.extend(self.parse_single_item(item, Some(index))?);
-                }
-                return Ok(extractions);
-            }
-            
-            if let Some(results_array) = obj.get("results").and_then(|v| v.as_array()) {
-                for (index, item) in results_array.iter().enumerate() {
-                    extractions.extend(self.parse_single_item(item, Some(index))?);
-                }
-                return Ok(extractions);
-            }
-
-            // Handle flat JSON structure like {"name": "John", "age": "25"}
-            extractions.extend(self.parse_single_item(json, None)?);
-        }
-
-        Ok(extractions)
-    }
-
-    /// Parse a single item (object or primitive) into extractions
-    #[allow(dead_code)]
-    fn parse_single_item(&self, item: &serde_json::Value, index: Option<usize>) -> LangExtractResult<Vec<Extraction>> {
-        let mut extractions = Vec::new();
-
-        if let Some(obj) = item.as_object() {
-            for (key, value) in obj {
-                // Skip null values
-                if value.is_null() {
-                    continue;
-                }
-
-                let extraction_text = if let Some(text) = value.as_str() {
-                    text.to_string()
-                } else if let Some(num) = value.as_number() {
-                    num.to_string()
-                } else if let Some(bool_val) = value.as_bool() {
-                    bool_val.to_string()
-                } else {
-                    // For complex values, serialize as JSON
-                    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
-                };
-                
-                // Create extraction class name - include index if we're processing an array
-                let extraction_class = if let Some(idx) = index {
-                    format!("{}_{}", key, idx)
-                } else {
-                    key.clone()
-                };
-                
-                extractions.push(Extraction::new(extraction_class, extraction_text));
-            }
-        }
-
-        Ok(extractions)
-    }
 }

@@ -51,8 +51,6 @@ pub struct ProcessingConfig {
     pub additional_context: Option<String>,
     /// Enable debug mode
     pub debug: bool,
-    /// Number of extraction passes to improve recall
-    pub extraction_passes: usize,
     /// Whether to wrap output in code fences
     pub fence_output: Option<bool>,
     /// Whether to use schema constraints
@@ -232,7 +230,6 @@ impl Default for ProcessingConfig {
             max_workers: 6,
             additional_context: None,
             debug: false,
-            extraction_passes: 1,
             fence_output: None,
             use_schema_constraints: true,
             custom_params: HashMap::new(),
@@ -532,8 +529,8 @@ impl From<LangExtractConfig> for crate::ExtractConfig {
             },
             debug: config.processing.debug,
             model_url: Some(config.provider.base_url.clone()),
-            extraction_passes: config.processing.extraction_passes,
             enable_multipass: config.multipass.enable_multipass,
+            multipass_max_passes: config.multipass.max_passes,
             multipass_min_extractions: config.multipass.min_extractions_per_chunk,
             multipass_quality_threshold: config.multipass.quality_threshold,
             progress_handler: config.progress.handler,

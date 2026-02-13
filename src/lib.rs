@@ -62,7 +62,6 @@ pub mod providers;
 pub mod factory;
 
 // Utility modules
-pub mod http_client;
 pub mod io;
 pub mod logging;
 pub mod pipeline;
@@ -125,10 +124,10 @@ pub struct ExtractConfig {
     pub debug: bool,
     /// Custom model URL for self-hosted models
     pub model_url: Option<String>,
-    /// Number of extraction passes to improve recall
-    pub extraction_passes: usize,
     /// Enable multi-pass extraction for improved recall
     pub enable_multipass: bool,
+    /// Maximum number of passes when multi-pass extraction is enabled (default: 2)
+    pub multipass_max_passes: usize,
     /// Minimum extractions per chunk to avoid re-processing
     pub multipass_min_extractions: usize,
     /// Quality threshold for keeping extractions (0.0 to 1.0)
@@ -155,8 +154,8 @@ impl Default for ExtractConfig {
             language_model_params: HashMap::new(),
             debug: false,
             model_url: None,
-            extraction_passes: 1,
             enable_multipass: false,
+            multipass_max_passes: 2,
             multipass_min_extractions: 1,
             multipass_quality_threshold: 0.3,
             progress_handler: None,
@@ -181,8 +180,8 @@ impl std::fmt::Debug for ExtractConfig {
             .field("language_model_params", &self.language_model_params)
             .field("debug", &self.debug)
             .field("model_url", &self.model_url)
-            .field("extraction_passes", &self.extraction_passes)
             .field("enable_multipass", &self.enable_multipass)
+            .field("multipass_max_passes", &self.multipass_max_passes)
             .field("multipass_min_extractions", &self.multipass_min_extractions)
             .field("multipass_quality_threshold", &self.multipass_quality_threshold)
             .field("progress_handler", &"<ProgressHandler>")
@@ -310,19 +309,17 @@ pub async fn extract(
     let annotator = annotation::Annotator::with_config(
         language_model,
         prompt_template,
-        config.format_type,
-        resolver.fence_output(),
         config.temperature,
         config.language_model_params.get("max_output_tokens")
             .and_then(|v| v.as_u64())
             .map(|v| v as usize),
     );
 
-    // Perform annotation - use multi-pass if enabled or extraction_passes > 1
-    if config.enable_multipass || config.extraction_passes > 1 {
+    // Perform annotation - use multi-pass if enabled
+    if config.enable_multipass {
         // Use multi-pass extraction
         let multipass_config = multipass::MultiPassConfig {
-            max_passes: config.extraction_passes,
+            max_passes: config.multipass_max_passes,
             min_extractions_per_chunk: config.multipass_min_extractions,
             enable_targeted_reprocessing: true,
             enable_refinement_passes: true,
@@ -362,7 +359,6 @@ pub async fn extract(
                 config.batch_length,
                 config.additional_context.as_deref(),
                 config.debug,
-                config.extraction_passes,
                 config.max_workers,
             )
             .await

@@ -16,7 +16,6 @@ global_config:
   max_char_buffer: 2000
   max_workers: 6
   batch_size: 4
-  extraction_passes: 1
   
   # Output options
   format: "json"

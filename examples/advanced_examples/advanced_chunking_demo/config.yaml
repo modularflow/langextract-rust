@@ -13,7 +13,6 @@ batch_size: 6           # Process multiple chunks in parallel
 
 # Processing configuration optimized for chunking
 temperature: 0.3        # Consistent results across chunks
-extraction_passes: 1    # Single pass per chunk (can combine with multipass)
 
 # Output options
 format: "json"

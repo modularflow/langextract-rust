@@ -21,7 +21,6 @@ temperature: 0.3
 max_char_buffer: 1000
 max_workers: 4
 batch_size: 10
-extraction_passes: 1
 
 # Output options
 format: "json"

@@ -236,7 +236,6 @@ impl MultiPassProcessor {
                 self.config.batch_length,
                 enhanced_context.as_deref(),
                 false, // Don't debug individual passes unless requested
-                1,     // extraction_passes (single pass per multi-pass iteration)
                 self.config.max_workers,
             ).await?;
 
@@ -425,7 +424,7 @@ impl MultiPassProcessor {
     ) -> LangExtractResult<ChunkResult> {
         let start_time = Instant::now();
 
-        match self.annotator.annotate_text(&chunk.text, &self.resolver, self.config.max_char_buffer, self.config.batch_length, additional_context, false, 1, self.config.max_workers).await {
+        match self.annotator.annotate_text(&chunk.text, &self.resolver, self.config.max_char_buffer, self.config.batch_length, additional_context, false, self.config.max_workers).await {
             Ok(annotated_doc) => {
                 let mut extractions = annotated_doc.extractions.unwrap_or_default();
                 

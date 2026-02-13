@@ -11,7 +11,6 @@ temperature: 0.2  # Lower temperature for more consistent positioning
 max_char_buffer: 2000
 max_workers: 2  # Fewer workers for more consistent alignment
 batch_size: 4
-extraction_passes: 1
 
 # Output options - always show intervals for alignment demo
 format: "json"

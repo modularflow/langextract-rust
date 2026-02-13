@@ -199,8 +199,8 @@ let config = ExtractConfig {
     max_char_buffer: 8000,         // Characters per chunk
     batch_length: 6,               // Chunks per batch
     max_workers: 8,                // Concurrent workers
-    extraction_passes: 1,          // Passes (use with enable_multipass)
-    enable_multipass: false,       // Multi-pass extraction
+    enable_multipass: false,      // Multi-pass extraction (when true, use multipass_max_passes)
+    multipass_max_passes: 2,       // Max passes when multipass enabled (default: 2)
     debug: false,                  // Debug output and raw file saving
     ..Default::default()
 };

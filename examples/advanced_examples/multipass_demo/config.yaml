@@ -15,10 +15,10 @@ temperature: 0.4        # Higher temperature for diverse passes
 max_char_buffer: 8000   # Larger chunks for complex text
 max_workers: 6          # Parallel processing
 batch_size: 4           # Moderate batch size for stability
-extraction_passes: 3    # Multiple passes for better recall
 
 # Multipass settings - the key feature being demonstrated
 multipass: true                     # Enable multipass extraction
+multipass_max_passes: 3             # Multiple passes for better recall
 multipass_min_extractions: 3       # Minimum extractions per chunk to avoid reprocessing
 multipass_quality_threshold: 0.7   # Quality threshold for keeping extractions
 

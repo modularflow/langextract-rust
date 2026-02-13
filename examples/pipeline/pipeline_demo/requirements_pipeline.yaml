@@ -25,7 +25,6 @@ global_config:
       extra_params: {}
   debug: false
   model_url: "http://localhost:11434"
-  extraction_passes: 1
   enable_multipass: false
   multipass_min_extractions: 1
   multipass_quality_threshold: 0.3

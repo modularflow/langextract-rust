@@ -190,20 +190,6 @@ impl TextAligner {
         None
     }
 
-    /// Find fuzzy matches using sliding window approach (allocates source words internally)
-    #[allow(dead_code)]
-    fn find_fuzzy_match(&self, extraction_text: &str, source_text: &str) -> Option<(usize, usize, AlignmentStatus)> {
-        let source_words: Vec<&str> = source_text.split_whitespace().collect();
-        let word_byte_offsets: Vec<(usize, usize)> = source_text
-            .split_whitespace()
-            .map(|word| {
-                let start = word.as_ptr() as usize - source_text.as_ptr() as usize;
-                (start, start + word.len())
-            })
-            .collect();
-        self.find_fuzzy_match_with_words(extraction_text, source_text, &source_words, &word_byte_offsets)
-    }
-
     /// Find fuzzy matches using pre-computed source word list and byte offsets.
     /// Avoids re-splitting, re-lowercasing, and allocating join strings per extraction.
     fn find_fuzzy_match_with_words(&self, extraction_text: &str, source_text: &str, source_words: &[&str], word_byte_offsets: &[(usize, usize)]) -> Option<(usize, usize, AlignmentStatus)> {

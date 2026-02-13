@@ -11,7 +11,6 @@ temperature: 0.3        # Consistent results for clean visualization
 max_char_buffer: 4000   # Standard chunk size
 max_workers: 6          # Moderate parallelism
 batch_size: 4           # Standard batch processing
-extraction_passes: 1    # Single pass for clean demo
 
 # Output options - key for visualization
 format: "json"
