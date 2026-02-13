@@ -166,13 +166,13 @@ impl PipelineExecutor {
     pub async fn execute(&self, input_text: &str) -> LangExtractResult<PipelineResult> {
         let start_time = std::time::Instant::now();
 
-        println!("🚀 Starting pipeline execution: {}", self.config.name);
-        println!("📝 Description: {}", self.config.description);
+        println!("[pipeline] starting: {}", self.config.name);
+        println!("[pipeline] {}", self.config.description);
         
         if self.config.enable_parallel_execution {
-            println!("⚡ Parallel execution enabled - independent steps will run concurrently");
+            println!("[pipeline] mode: parallel (independent steps run concurrently)");
         } else {
-            println!("🔄 Sequential execution - steps will run one after another");
+            println!("[pipeline] mode: sequential");
         }
 
         if self.config.enable_parallel_execution {
@@ -211,7 +211,7 @@ impl PipelineExecutor {
 
         let total_time = start_time.elapsed().as_millis() as u64;
 
-        println!("✅ Pipeline execution completed in {}ms", total_time);
+        println!("[pipeline] done in {}ms", total_time);
 
         Ok(PipelineResult {
             config: self.config.clone(),
@@ -232,7 +232,7 @@ impl PipelineExecutor {
         let execution_waves = self.resolve_execution_waves()?;
         
         for (wave_index, wave_steps) in execution_waves.iter().enumerate() {
-            println!("🌊 Executing wave {} with {} steps", wave_index + 1, wave_steps.len());
+            println!("[pipeline] wave {}: {} steps", wave_index + 1, wave_steps.len());
             
             if wave_steps.len() == 1 {
                 // Single step - execute normally
@@ -251,7 +251,7 @@ impl PipelineExecutor {
                 }
             } else {
                 // Multiple independent steps - execute in parallel
-                println!("⚡ Running {} steps in parallel", wave_steps.len());
+                println!("[pipeline] running {} steps in parallel", wave_steps.len());
                 
                 let parallel_futures: Vec<_> = wave_steps.iter()
                     .map(|step_id| self.execute_step(step_id, input_text, &context_data))
@@ -283,7 +283,7 @@ impl PipelineExecutor {
 
         let total_time = start_time.elapsed().as_millis() as u64;
 
-        println!("✅ Pipeline execution completed in {}ms", total_time);
+        println!("[pipeline] done in {}ms", total_time);
 
         Ok(PipelineResult {
             config: self.config.clone(),
@@ -396,19 +396,19 @@ impl PipelineExecutor {
 
         let step_start = std::time::Instant::now();
 
-        println!("🔄 Executing step: {} ({})", step.name, step.id);
+        println!("[pipeline] step: {} ({})", step.name, step.id);
 
         // Determine input text for this step with mapping context
         let step_input = self.prepare_step_input(step, input_text, context_data)?;
         let input_count = step_input.len();
 
-        println!("📥 Processing {} input items", input_count);
+        println!("[pipeline] processing {} input items", input_count);
 
         let mut all_extractions = Vec::new();
 
         // Process each input item
         for (i, input_item) in step_input.iter().enumerate() {
-            println!("  📄 Processing item {}/{}", i + 1, input_count);
+            println!("[pipeline] item {}/{}", i + 1, input_count);
 
             // Create extraction config for this step
             let step_config = self.config.global_config.clone();
@@ -493,7 +493,7 @@ impl PipelineExecutor {
                     }
                 }
                 Err(e) => {
-                    println!("  ❌ Step '{}' failed on item {}/{}: {}", step.id, i + 1, input_count, e);
+                    println!("[pipeline] step '{}' failed on item {}/{}: {}", step.id, i + 1, input_count, e);
                     return Ok(StepResult {
                         step_id: step.id.clone(),
                         step_name: step.name.clone(),
@@ -509,7 +509,7 @@ impl PipelineExecutor {
 
         let processing_time = step_start.elapsed().as_millis() as u64;
 
-        println!("  ✅ Step '{}' completed: {} extractions in {}ms",
+        println!("[pipeline] step '{}' done: {} extractions in {}ms",
                 step.name, all_extractions.len(), processing_time);
 
         Ok(StepResult {

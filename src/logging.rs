@@ -83,14 +83,12 @@ pub trait ProgressHandler: Send + Sync {
     fn handle_progress(&self, event: ProgressEvent);
 }
 
-/// Console progress handler that outputs to stdout
+/// Console progress handler that outputs to stdout with pipeline stage tags.
 pub struct ConsoleProgressHandler {
     /// Whether to show progress messages
     pub show_progress: bool,
     /// Whether to show debug information
     pub show_debug: bool,
-    /// Whether to use emoji and colors
-    pub use_styling: bool,
 }
 
 impl ConsoleProgressHandler {
@@ -99,7 +97,6 @@ impl ConsoleProgressHandler {
         Self {
             show_progress: true,
             show_debug: false,
-            use_styling: true,
         }
     }
 
@@ -108,50 +105,27 @@ impl ConsoleProgressHandler {
         Self {
             show_progress: false,
             show_debug: false,
-            use_styling: true,
         }
     }
 
-    /// Create a verbose console handler (everything)
+    /// Create a verbose console handler (everything including debug)
     pub fn verbose() -> Self {
         Self {
             show_progress: true,
             show_debug: true,
-            use_styling: true,
         }
     }
 
-    /// Create a machine-readable handler (no styling)
+    /// Create a machine-readable handler (same as default, no emoji)
     pub fn machine_readable() -> Self {
         Self {
             show_progress: true,
             show_debug: false,
-            use_styling: false,
         }
     }
 
-    fn format_message(&self, emoji: &str, message: &str) -> String {
-        if self.use_styling {
-            format!("{} {}", emoji, message)
-        } else {
-            format!("[{}] {}", 
-                match emoji {
-                    "🤖" => "MODEL",
-                    "📄" => "CHUNK",
-                    "🔄" => "PROGRESS",
-                    "✅" => "SUCCESS",
-                    "❌" => "ERROR",
-                    "⏳" => "WAIT",
-                    "🎯" => "COMPLETE",
-                    "🔧" => "DEBUG",
-                    "📥" => "RESPONSE",
-                    "📡" => "REQUEST",
-                    "🎉" => "SUCCESS",
-                    _ => "INFO",
-                },
-                message
-            )
-        }
+    fn format_message(&self, tag: &str, message: &str) -> String {
+        format!("[{}] {}", tag, message)
     }
 }
 
@@ -166,67 +140,63 @@ impl ProgressHandler for ConsoleProgressHandler {
         match event {
             ProgressEvent::ProcessingStarted { text_length, model, provider } => {
                 if self.show_progress {
-                    let msg = format!("Calling {} model: {} ({} chars input)", provider, model, text_length);
-                    println!("{}", self.format_message("🤖", &msg));
+                    println!("{}", self.format_message("inference",
+                        &format!("{}/{} -- {} chars input", provider, model, text_length)));
                 }
             }
             ProgressEvent::ChunkingStarted { total_chars, chunk_count, strategy } => {
                 if self.show_progress {
-                    let msg = format!("Processing document with {} {} chunks ({} chars total)", 
-                        chunk_count, strategy, total_chars);
-                    println!("{}", self.format_message("📄", &msg));
+                    println!("{}", self.format_message("chunking",
+                        &format!("{} chunks ({} strategy, {} chars total)", chunk_count, strategy, total_chars)));
                 }
             }
-            ProgressEvent::BatchProgress { batch_number, total_batches: _, chunks_processed, total_chunks } => {
+            ProgressEvent::BatchProgress { batch_number: _, total_batches: _, chunks_processed, total_chunks } => {
                 if self.show_progress {
-                    let msg = format!("Processing batch {} ({}/{} chunks processed)", 
-                        batch_number, chunks_processed, total_chunks);
-                    println!("{}", self.format_message("🔄", &msg));
+                    println!("{}", self.format_message("progress",
+                        &format!("{}/{} chunks processed", chunks_processed, total_chunks)));
                 }
             }
             ProgressEvent::ModelCall { provider, model: _, input_length } => {
-                if self.show_progress {
-                    let msg = format!("Starting {} API call with retry logic for input size {}", provider, input_length);
-                    println!("{}", self.format_message("🔄", &msg));
+                if self.show_debug {
+                    println!("{}", self.format_message("inference",
+                        &format!("{} API call -- {} chars", provider, input_length)));
                 }
             }
-            ProgressEvent::ModelResponse { success, output_length: _ } => {
-                if self.show_progress {
-                    let msg = if success {
-                        "Received response from language model".to_string()
+            ProgressEvent::ModelResponse { success, output_length } => {
+                if self.show_debug {
+                    if success {
+                        println!("{}", self.format_message("inference",
+                            &format!("response received -- {} chars", output_length.unwrap_or(0))));
                     } else {
-                        "Failed to receive response from language model".to_string()
-                    };
-                    println!("{}", self.format_message("📥", &msg));
+                        println!("{}", self.format_message("inference", "no response from model"));
+                    }
                 }
             }
             ProgressEvent::AggregationStarted { chunk_count } => {
                 if self.show_progress {
-                    let msg = format!("Aggregating results from {} chunks...", chunk_count);
-                    println!("{}", self.format_message("🔄", &msg));
+                    println!("{}", self.format_message("aggregation",
+                        &format!("merging results from {} chunks", chunk_count)));
                 }
             }
             ProgressEvent::ProcessingCompleted { total_extractions, processing_time_ms: _ } => {
                 if self.show_progress {
-                    let msg = format!("Extraction complete! Found {} total extractions", total_extractions);
-                    println!("{}", self.format_message("🎯", &msg));
+                    println!("{}", self.format_message("done",
+                        &format!("{} extractions found", total_extractions)));
                 }
             }
             ProgressEvent::RetryAttempt { operation, attempt, max_attempts, delay_seconds } => {
                 if self.show_progress {
-                    println!("{}", self.format_message("❌", 
-                        &format!("{} failed (attempt {}/{})", operation, attempt, max_attempts)));
-                    println!("{}", self.format_message("⏳", 
-                        &format!("Retrying in {} seconds...", delay_seconds)));
+                    println!("{}", self.format_message("retry",
+                        &format!("{} failed (attempt {}/{}), retrying in {}s", operation, attempt, max_attempts, delay_seconds)));
                 }
             }
             ProgressEvent::Error { operation, error } => {
                 // Always show errors
-                println!("{}", self.format_message("❌", &format!("{}: {}", operation, error)));
+                eprintln!("{}", self.format_message("error", &format!("{}: {}", operation, error)));
             }
             ProgressEvent::Debug { operation, details } => {
                 if self.show_debug {
-                    println!("{}", self.format_message("🔧", &format!("DEBUG: {}: {}", operation, details)));
+                    println!("{}", self.format_message("debug", &format!("{}: {}", operation, details)));
                 }
             }
             ProgressEvent::ValidationStarted { raw_output_length: _ } => {
@@ -234,9 +204,9 @@ impl ProgressHandler for ConsoleProgressHandler {
             }
             ProgressEvent::ValidationCompleted { extractions_found, aligned_count, errors, warnings } => {
                 if self.show_debug {
-                    let msg = format!("Validation result: {} extractions ({} aligned), {} errors, {} warnings", 
-                        extractions_found, aligned_count, errors, warnings);
-                    println!("{}", self.format_message("🔧", &format!("DEBUG: {}", msg)));
+                    println!("{}", self.format_message("validation",
+                        &format!("{} extractions ({} aligned), {} errors, {} warnings",
+                            extractions_found, aligned_count, errors, warnings)));
                 }
             }
         }
@@ -370,13 +340,13 @@ mod tests {
     #[test]
     fn test_console_handler_formatting() {
         let handler = ConsoleProgressHandler::new();
-        let message = handler.format_message("🤖", "Test message");
-        assert!(message.contains("🤖"));
+        let message = handler.format_message("inference", "Test message");
+        assert!(message.contains("[inference]"));
         assert!(message.contains("Test message"));
 
         let machine_handler = ConsoleProgressHandler::machine_readable();
-        let machine_message = machine_handler.format_message("🤖", "Test message");
-        assert!(machine_message.contains("[MODEL]"));
+        let machine_message = machine_handler.format_message("chunking", "Test message");
+        assert!(machine_message.contains("[chunking]"));
         assert!(machine_message.contains("Test message"));
     }
 

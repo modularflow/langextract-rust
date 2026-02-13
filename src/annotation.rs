@@ -11,7 +11,7 @@ use crate::{
     resolver::Resolver,
     tokenizer::Tokenizer,
 };
-use futures::future::join_all;
+use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -23,6 +23,12 @@ pub struct Annotator {
     format_type: FormatType,
     #[allow(dead_code)]
     fence_output: bool,
+    /// Sampling temperature for LLM inference (from user config)
+    temperature: f32,
+    /// Maximum output tokens for LLM inference (from user config or estimated)
+    max_output_tokens: usize,
+    /// Cached expected fields derived from prompt_template examples
+    expected_fields: Vec<String>,
 }
 
 impl Annotator {
@@ -33,11 +39,59 @@ impl Annotator {
         format_type: FormatType,
         fence_output: bool,
     ) -> Self {
+        // Pre-compute expected fields from examples (fixes issue 6.8)
+        let expected_fields: Vec<String> = prompt_template.examples
+            .iter()
+            .flat_map(|example| example.extractions.iter())
+            .map(|extraction| extraction.extraction_class.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Estimate max_output_tokens from number of extraction classes
+        let estimated_max_tokens = std::cmp::max(expected_fields.len() * 200, 500);
+
         Self {
             language_model,
             prompt_template,
             format_type,
             fence_output,
+            temperature: 0.5,
+            max_output_tokens: estimated_max_tokens,
+            expected_fields,
+        }
+    }
+
+    /// Create a new annotator with explicit inference parameters from user config
+    pub fn with_config(
+        language_model: Box<dyn BaseLanguageModel>,
+        prompt_template: PromptTemplateStructured,
+        format_type: FormatType,
+        fence_output: bool,
+        temperature: f32,
+        max_output_tokens: Option<usize>,
+    ) -> Self {
+        // Pre-compute expected fields from examples (fixes issue 6.8)
+        let expected_fields: Vec<String> = prompt_template.examples
+            .iter()
+            .flat_map(|example| example.extractions.iter())
+            .map(|extraction| extraction.extraction_class.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Use provided max_output_tokens or estimate from extraction classes
+        let computed_max_tokens = max_output_tokens
+            .unwrap_or_else(|| std::cmp::max(expected_fields.len() * 200, 500));
+
+        Self {
+            language_model,
+            prompt_template,
+            format_type,
+            fence_output,
+            temperature,
+            max_output_tokens: computed_max_tokens,
+            expected_fields,
         }
     }
 
@@ -114,10 +168,10 @@ impl Annotator {
             });
         }
 
-        // Create inference parameters
+        // Create inference parameters from config (not hardcoded)
         let mut kwargs = HashMap::new();
-        kwargs.insert("temperature".to_string(), serde_json::json!(1));
-        kwargs.insert("max_completion_tokens".to_string(), serde_json::json!(8000));
+        kwargs.insert("temperature".to_string(), serde_json::json!(self.temperature));
+        kwargs.insert("max_completion_tokens".to_string(), serde_json::json!(self.max_output_tokens));
 
         // Call the language model
         let results = self.language_model.infer(&[prompt], &kwargs).await?;
@@ -150,14 +204,8 @@ impl Annotator {
                     });
                 }
 
-                // Extract expected fields from examples for validation
-                let expected_fields: Vec<String> = self.prompt_template.examples
-                    .iter()
-                    .flat_map(|example| example.extractions.iter())
-                    .map(|extraction| extraction.extraction_class.clone())
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
-                    .collect();
+                // Use cached expected fields (computed once at Annotator creation)
+                let expected_fields = &self.expected_fields;
 
                 // Use new validation system with raw data preservation
                 report_progress(ProgressEvent::ValidationStarted {
@@ -308,66 +356,72 @@ impl Annotator {
         ).await
     }
 
-    /// Common method to process text chunks in parallel batches
+    /// Common method to process text chunks with bounded streaming concurrency
     async fn process_text_chunks_in_batches(
         &self,
         chunks: Vec<TextChunk>,
         original_text: &str,
         resolver: &Resolver,
-        batch_length: usize,
+        _batch_length: usize,
         additional_context: Option<&str>,
         debug: bool,
         extraction_passes: usize,
         max_workers: usize,
     ) -> LangExtractResult<AnnotatedDocument> {
-        // Process chunks in parallel batches
-        let mut chunk_results = Vec::new();
-        let effective_workers = std::cmp::min(max_workers, batch_length);
         let total_chunks = chunks.len();
-        let mut processed_chunks = 0;
 
-        for (batch_idx, chunk_batch) in chunks.chunks(batch_length).enumerate() {
-            // Progress reporting for each batch
-            report_progress(ProgressEvent::BatchProgress {
-                batch_number: batch_idx + 1,
-                total_batches: (chunks.len() + batch_length - 1) / batch_length,
-                chunks_processed: processed_chunks,
-                total_chunks,
-            });
+        report_progress(ProgressEvent::BatchProgress {
+            batch_number: 1,
+            total_batches: 1,
+            chunks_processed: 0,
+            total_chunks,
+        });
 
-            let batch_futures: Vec<_> = chunk_batch.iter()
-                .take(effective_workers)
-                .map(|chunk| self.process_chunk(chunk, resolver, additional_context, debug))
-                .collect();
+        // Use buffer_unordered to process ALL chunks with bounded concurrency.
+        // This replaces the previous batch-loop-with-take pattern that silently
+        // dropped chunks when batch_length > max_workers.
+        let chunk_results: Vec<LangExtractResult<ChunkResult>> = stream::iter(chunks.iter())
+            .map(|chunk| self.process_chunk(chunk, resolver, additional_context, debug))
+            .buffer_unordered(max_workers)
+            .collect()
+            .await;
 
-            let batch_results = join_all(batch_futures).await;
-            
-            for result in batch_results {
-                chunk_results.push(result?);
-            }
-
-            processed_chunks += chunk_batch.len();
-            
-            if debug {
+        // Collect results, propagating any errors
+        let mut collected_results = Vec::with_capacity(chunk_results.len());
+        for (i, result) in chunk_results.into_iter().enumerate() {
+            collected_results.push(result?);
+            if debug && (i + 1) % max_workers == 0 {
                 report_progress(ProgressEvent::Debug {
                     operation: "batch_processing".to_string(),
-                    details: format!("Batch {} processing completed ({}/{} chunks done)", 
-                        batch_idx + 1, processed_chunks, total_chunks),
+                    details: format!("Progress: {}/{} chunks processed", i + 1, total_chunks),
                 });
             }
         }
 
+        if debug {
+            report_progress(ProgressEvent::Debug {
+                operation: "batch_processing".to_string(),
+                details: format!("All {}/{} chunks processed", collected_results.len(), total_chunks),
+            });
+        }
+
         // Handle multiple extraction passes
         if extraction_passes > 1 {
-            if debug {
-                report_progress(ProgressEvent::Debug {
-                    operation: "multipass".to_string(),
-                    details: format!("Running {} additional extraction passes", extraction_passes - 1),
-                });
-            }
-            
-            // TODO: Implement multi-pass extraction
-            // For now, we just use the single pass results
+            // Log a warning: the proper multi-pass path is via enable_multipass + MultiPassProcessor
+            report_progress(ProgressEvent::Debug {
+                operation: "multipass".to_string(),
+                details: format!(
+                    "extraction_passes={} requested but enable_multipass is not set. \
+                     Set enable_multipass=true in ExtractConfig to use the MultiPassProcessor \
+                     for actual multi-pass extraction. Returning single-pass results.",
+                    extraction_passes
+                ),
+            });
+            log::warn!(
+                "extraction_passes={} without enable_multipass=true has no effect. \
+                 Enable multi-pass via ExtractConfig::enable_multipass.",
+                extraction_passes
+            );
         }
 
         // Aggregate results
@@ -376,7 +430,7 @@ impl Annotator {
         });
         let aggregator = ResultAggregator::new();
         let final_result = aggregator.aggregate_chunk_results(
-            chunk_results,
+            collected_results,
             original_text.to_string(),
             None,
         )?;

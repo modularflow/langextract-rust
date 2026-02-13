@@ -126,7 +126,7 @@ pub fn export_pipeline_html(
     html.push_str("        </div>\n");
     html.push_str("        <div class=\"content\">\n");
     html.push_str("            <div class=\"section\">\n");
-    html.push_str("                <h2>📄 Document Text</h2>\n");
+    html.push_str("                <h2>Document Text</h2>\n");
     if config.show_pipeline_legend {
         html.push_str(&build_legend_html(pipeline_result));
     }
@@ -135,7 +135,7 @@ pub fn export_pipeline_html(
     html.push_str("</div>\n");
     html.push_str("            </div>\n");
     html.push_str("            <div class=\"section\">\n");
-    html.push_str("                <h2>🎯 Extractions by Step</h2>\n");
+    html.push_str("                <h2>Extractions by Step</h2>\n");
     html.push_str("                <div>\n");
     html.push_str(&build_extractions_list_html(&spans));
     html.push_str("                </div>\n");
@@ -555,18 +555,18 @@ fn visualize_text(
 ) -> LangExtractResult<String> {
     let mut result = String::new();
     
-    result.push_str("📄 EXTRACTION VISUALIZATION\n");
+    result.push_str("EXTRACTION VISUALIZATION\n");
     result.push_str("=" .repeat(50).as_str());
     result.push('\n');
     
     // Show document text
     let text = annotated_document.text.as_deref().unwrap_or("No text");
-    result.push_str(&format!("📝 Document Text ({} chars):\n", text.len()));
+    result.push_str(&format!("Document Text ({} chars):\n", text.len()));
     result.push_str(&format!("   {}\n\n", text));
     
     // Show extractions
     if let Some(extractions) = &annotated_document.extractions {
-        result.push_str(&format!("🎯 Found {} Extractions:\n", extractions.len()));
+        result.push_str(&format!("Found {} Extractions:\n", extractions.len()));
         result.push_str("-".repeat(30).as_str());
         result.push('\n');
         
@@ -590,11 +590,11 @@ fn visualize_text(
             result.push('\n');
         }
     } else {
-        result.push_str("ℹ️  No extractions found\n");
+        result.push_str("No extractions found\n");
     }
     
     // Show statistics
-    result.push_str("📊 Statistics:\n");
+    result.push_str("Statistics:\n");
     result.push_str("-".repeat(15).as_str());
     result.push('\n');
     result.push_str(&format!("   Document ID: {}\n", 
@@ -792,7 +792,7 @@ fn export_html(
     // Document text section (with highlighting if enabled)
     if config.include_text {
         html.push_str(r#"            <div class="section">
-                <h2>📄 Document Text</h2>
+                <h2>Document Text</h2>
                 <div class="document-text">"#);
         
         if config.highlight_extractions {
@@ -807,7 +807,7 @@ fn export_html(
     // Extractions section
     if let Some(extractions) = &annotated_document.extractions {
         html.push_str(&format!(r#"            <div class="section">
-                <h2>🎯 Extractions ({} found)</h2>
+                <h2>Extractions ({} found)</h2>
                 <div class="extractions-grid">
 "#, extractions.len()));
 
@@ -838,7 +838,7 @@ fn export_html(
     // Statistics section
     if config.include_statistics {
         html.push_str(r#"            <div class="section">
-                <h2>📊 Statistics</h2>
+                <h2>Statistics</h2>
                 <div class="stats-grid">
 "#);
 
@@ -1039,7 +1039,7 @@ fn export_markdown(
     
     // Document text section
     if config.include_text {
-        md.push_str("## 📄 Document Text\n\n");
+        md.push_str("## Document Text\n\n");
         
         if config.highlight_extractions {
             md.push_str(&highlight_text_markdown(text, annotated_document)?);
@@ -1052,7 +1052,7 @@ fn export_markdown(
     
     // Extractions section
     if let Some(extractions) = &annotated_document.extractions {
-        md.push_str(&format!("## 🎯 Extractions ({} found)\n\n", extractions.len()));
+        md.push_str(&format!("## Extractions ({} found)\n\n", extractions.len()));
         
         for (i, extraction) in extractions.iter().enumerate() {
             md.push_str(&format!("### {}. {}\n\n", i + 1, extraction.extraction_class));
@@ -1072,7 +1072,7 @@ fn export_markdown(
     
     // Statistics section
     if config.include_statistics {
-        md.push_str("## 📊 Statistics\n\n");
+        md.push_str("## Statistics\n\n");
         
         let extraction_count = annotated_document.extraction_count();
         md.push_str(&format!("- **Total Extractions:** {}\n", extraction_count));
@@ -1384,8 +1384,8 @@ mod tests {
         let result = export_document(&document, &config).unwrap();
         
         assert!(result.starts_with("# Test Markdown"));
-        assert!(result.contains("## 📄 Document Text"));
-        assert!(result.contains("## 🎯 Extractions"));
+        assert!(result.contains("## Document Text"));
+        assert!(result.contains("## Extractions"));
         assert!(result.contains("### 1. person"));
         assert!(result.contains("**Text:** John Smith"));
         assert!(result.contains("**Position:** 0-10"));
