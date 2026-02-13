@@ -538,6 +538,7 @@ impl Resolver {
     }
 
     /// Validate and parse model response with raw data preservation
+    #[tracing::instrument(skip_all, fields(response_len = raw_response.len(), num_expected_fields = expected_fields.len()))]
     pub fn validate_and_parse(&self, raw_response: &str, expected_fields: &[String]) -> LangExtractResult<(Vec<Extraction>, ValidationResult)> {
         // Step 1: Always save raw output first if enabled
         let raw_file_path = if self.validation_config.save_raw_outputs {

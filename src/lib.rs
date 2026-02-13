@@ -250,6 +250,7 @@ pub async fn extract_with_config(
 /// * No API key is provided
 /// * URL download fails
 /// * Language model inference fails
+#[tracing::instrument(skip_all, fields(text_len = text_or_documents.len(), num_examples = examples.len(), model = %config.model_id, multipass = config.enable_multipass))]
 pub async fn extract(
     text_or_documents: &str,
     prompt_description: Option<&str>,

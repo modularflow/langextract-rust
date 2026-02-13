@@ -84,6 +84,7 @@ impl Annotator {
     }
 
     /// Annotate text and return annotated document
+    #[tracing::instrument(skip_all, fields(text_len = text.len(), max_char_buffer, max_workers))]
     pub async fn annotate_text(
         &self,
         text: &str,
@@ -121,6 +122,7 @@ impl Annotator {
     }
 
     /// Process text that fits within the buffer limit
+    #[tracing::instrument(skip_all, fields(text_len = text.len()))]
     async fn process_single_text(
         &self,
         text: &str,
@@ -265,6 +267,7 @@ impl Annotator {
 
     /// Process large text using chunking
     /// Process text with chunking using token-based strategy
+    #[tracing::instrument(skip_all, fields(text_len = text.len(), max_char_buffer, max_workers))]
     async fn process_token_chunked_text(
         &self,
         text: &str,
@@ -341,6 +344,7 @@ impl Annotator {
     }
 
     /// Common method to process text chunks with bounded streaming concurrency
+    #[tracing::instrument(skip_all, fields(num_chunks = chunks.len(), max_workers))]
     async fn process_text_chunks_in_batches(
         &self,
         chunks: Vec<TextChunk>,
@@ -418,6 +422,7 @@ impl Annotator {
 
 
     /// Process a single chunk
+    #[tracing::instrument(skip_all, fields(chunk_id = chunk.id, chunk_len = chunk.text.len()))]
     async fn process_chunk(
         &self,
         chunk: &TextChunk,

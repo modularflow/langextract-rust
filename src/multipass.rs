@@ -131,6 +131,7 @@ impl MultiPassProcessor {
     }
 
     /// Perform multi-pass extraction on text
+    #[tracing::instrument(skip_all, fields(text_len = text.len(), max_passes = self.config.max_passes))]
     pub async fn extract_multipass(
         &self,
         text: &str,
@@ -530,6 +531,7 @@ impl MultiPassProcessor {
     }
 
     /// Filter and deduplicate extractions
+    #[tracing::instrument(skip_all, fields(num_candidates = scored_extractions.len()))]
     fn filter_and_deduplicate_extractions(
         &self,
         scored_extractions: Vec<ScoredExtraction>,

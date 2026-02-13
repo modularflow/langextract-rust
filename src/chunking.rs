@@ -360,6 +360,7 @@ impl TextChunker {
     }
 
     /// Chunk text into smaller pieces
+    #[tracing::instrument(skip_all, fields(text_len = text.len(), strategy = ?self.config.strategy, max_chunk_size = self.config.max_chunk_size))]
     pub fn chunk_text(&self, text: &str, document_id: Option<String>) -> LangExtractResult<Vec<TextChunk>> {
         if text.len() <= self.config.max_chunk_size {
             // Text is small enough, return as single chunk
@@ -463,6 +464,7 @@ impl TextChunker {
     }
 
     /// Semantic chunking using embeddings and content understanding
+    #[tracing::instrument(skip_all, fields(text_len = text.len()))]
     fn chunk_semantic(&self, text: &str, document_id: Option<String>) -> LangExtractResult<Vec<TextChunk>> {
         // Use tiktoken BPE tokenizer for accurate token counting (cl100k_base covers GPT-4/GPT-3.5)
         let bpe = tiktoken_rs::cl100k_base().map_err(|e| {

@@ -105,6 +105,7 @@ impl UniversalProvider {
 
     /// Process a single OpenAI prompt
     #[cfg(feature = "openai")]
+    #[tracing::instrument(skip_all, fields(provider = "openai", model = %self.config.model, prompt_len = prompt.len()))]
     async fn infer_openai_single(
         &self,
         prompt: &str,
@@ -213,6 +214,7 @@ impl UniversalProvider {
     }
 
     /// Process a single Ollama prompt
+    #[tracing::instrument(skip_all, fields(provider = "ollama", model = %self.config.model, prompt_len = prompt.len()))]
     async fn infer_ollama_single(
         &self,
         prompt: &str,
@@ -349,6 +351,7 @@ impl BaseLanguageModel for UniversalProvider {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(batch_size = batch_prompts.len()))]
     async fn infer(
         &self,
         batch_prompts: &[String],

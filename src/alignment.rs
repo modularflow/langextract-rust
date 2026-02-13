@@ -57,6 +57,7 @@ impl TextAligner {
     /// Align extractions with the source text.
     /// Pre-lowercases the source text once and reuses it across all extractions
     /// to avoid repeated O(n) allocations.
+    #[tracing::instrument(skip_all, fields(num_extractions = extractions.len(), source_len = source_text.len(), char_offset))]
     pub fn align_extractions(
         &self,
         extractions: &mut [Extraction],
