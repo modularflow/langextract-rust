@@ -285,7 +285,7 @@ mod cli {
         dotenvy::dotenv().ok();
 
         if !args.quiet {
-            println!("{}", style("🚀 LangExtract - Starting extraction...").bold().cyan());
+            println!("{}", style("LangExtract - starting extraction").bold().cyan());
         }
 
         // Create progress bar (only in non-quiet mode)
@@ -308,7 +308,7 @@ mod cli {
             load_examples(examples_path)?
         } else {
             if !args.quiet {
-                println!("{}", style("⚠️  No examples provided. Using default person extraction examples.").yellow());
+                println!("{}", style("Warning: no examples provided, using default person extraction examples.").yellow());
             }
             get_default_examples()
         };
@@ -323,12 +323,12 @@ mod cli {
         }
         let text = if args.input.starts_with("http://") || args.input.starts_with("https://") {
             if !args.quiet {
-                println!("📥 Downloading from URL: {}", args.input);
+                println!("Downloading from URL: {}", args.input);
             }
             langextract_rust::io::download_text_from_url(&args.input).await?
         } else if std::path::Path::new(&args.input).exists() {
             if !args.quiet {
-                println!("📖 Reading file: {}", args.input);
+                println!("Reading file: {}", args.input);
             }
             fs::read_to_string(&args.input)?
         } else {
@@ -407,13 +407,13 @@ mod cli {
         ).await {
             Ok(result) => {
                 if let Some(ref pb) = pb {
-                    pb.finish_with_message("✅ Extraction completed");
+                    pb.finish_with_message("Extraction completed");
                 }
                 result
             }
             Err(e) => {
                 if let Some(ref pb) = pb {
-                    pb.finish_with_message("❌ Extraction failed");
+                    pb.finish_with_message("Extraction failed");
                 }
                 return Err(handle_extraction_error(e));
             }
@@ -422,7 +422,7 @@ mod cli {
         let elapsed = start_time.elapsed();
         if !args.quiet {
             println!("{} Found {} extractions in {:.2}s", 
-                style("🎯").green(), 
+                style(">>").green(), 
                 result.extraction_count(), 
                 elapsed.as_secs_f64()
             );
@@ -432,7 +432,7 @@ mod cli {
         if let Some(output_path) = &args.output {
             write_output(&result, output_path, &args)?;
             if !args.quiet {
-                println!("💾 Results saved to: {}", output_path.display());
+                println!("Results saved to: {}", output_path.display());
             }
         } else {
             print_output(&result, &args)?;
@@ -462,7 +462,7 @@ mod cli {
             
             fs::write(&filename, exported)?;
             if !args.quiet {
-                println!("📊 Visualization exported to: {}", filename);
+                println!("Visualization exported to: {}", filename);
             }
         }
 
@@ -470,7 +470,7 @@ mod cli {
     }
 
     async fn init_command(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", style("🔧 Initializing LangExtract configuration...").bold().cyan());
+        println!("{}", style("Initializing LangExtract configuration...").bold().cyan());
 
         let config_dir = &args.directory;
         fs::create_dir_all(config_dir)?;
@@ -481,7 +481,7 @@ mod cli {
             let examples = get_default_examples();
             let examples_json = serde_json::to_string_pretty(&examples)?;
             fs::write(&examples_path, examples_json)?;
-            println!("📝 Created examples template: {}", examples_path.display());
+            println!("Created examples template: {}", examples_path.display());
         }
 
         // Create .env template
@@ -504,7 +504,7 @@ CUSTOM_MODEL_URL=http://localhost:8000
 OLLAMA_BASE_URL=http://localhost:11434
 "#;
             fs::write(&env_path, env_content)?;
-            println!("🔑 Created environment template: {}", env_path.display());
+            println!("Created environment template: {}", env_path.display());
         }
 
         // Create config file based on provider
@@ -513,10 +513,10 @@ OLLAMA_BASE_URL=http://localhost:11434
         if !config_path.exists() || args.force {
             let config_content = generate_config_template(provider);
             fs::write(&config_path, config_content)?;
-            println!("⚙️  Created configuration template: {}", config_path.display());
+            println!("Created configuration template: {}", config_path.display());
         }
 
-        println!("\n{}", style("✅ Configuration initialized successfully!").green().bold());
+        println!("\n{}", style("Configuration initialized successfully.").green().bold());
         println!("\nNext steps:");
         println!("1. Edit {} with your API keys", style(".env.example").cyan());
         println!("2. Customize {} with your extraction examples", style("examples.json").cyan());
@@ -526,7 +526,7 @@ OLLAMA_BASE_URL=http://localhost:11434
     }
 
     async fn test_command(args: TestArgs) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", style("🧪 Testing provider connectivity...").bold().cyan());
+        println!("{}", style("Testing provider connectivity...").bold().cyan());
 
         dotenvy::dotenv().ok();
 
@@ -587,28 +587,28 @@ OLLAMA_BASE_URL=http://localhost:11434
 
         match extract("This is a test message", Some("Extract test information"), &examples, config).await {
             Ok(_) => {
-                pb.finish_with_message("✅ Provider test successful");
-                println!("{}", style("🎉 Connection to provider working correctly!").green().bold());
+                pb.finish_with_message("Provider test successful");
+                println!("{}", style("Connection to provider working correctly.").green().bold());
             }
             Err(e) => {
-                pb.finish_with_message("❌ Provider test failed");
-                println!("{}", style("❌ Provider test failed:").red().bold());
+                pb.finish_with_message("Provider test failed");
+                println!("{}", style("Provider test failed:").red().bold());
                 println!("{}", e);
                 
                 match provider {
                     ProviderType::Ollama => {
-                        println!("\n{}", style("💡 Troubleshooting tips for Ollama:").yellow());
+                        println!("\n{}", style("Troubleshooting tips for Ollama:").yellow());
                         println!("1. Start Ollama: {}", style("ollama serve").cyan());
                         println!("2. Pull model: {}", style(&format!("ollama pull {}", model)).cyan());
                         println!("3. Check status: {}", style("curl http://localhost:11434/api/tags").cyan());
                     }
                     ProviderType::OpenAI => {
-                        println!("\n{}", style("💡 Troubleshooting tips for OpenAI:").yellow());
+                        println!("\n{}", style("Troubleshooting tips for OpenAI:").yellow());
                         println!("1. Set API key: {}", style("export OPENAI_API_KEY=your_key").cyan());
                         println!("2. Check account: https://platform.openai.com/account/api-keys");
                     }
                     ProviderType::Custom => {
-                        println!("\n{}", style("💡 Troubleshooting tips for Custom provider:").yellow());
+                        println!("\n{}", style("Troubleshooting tips for Custom provider:").yellow());
                         println!("1. Check URL: {}", style("--model-url http://your-server").cyan());
                         println!("2. Verify API compatibility with OpenAI format");
                     }
@@ -622,7 +622,7 @@ OLLAMA_BASE_URL=http://localhost:11434
     }
 
     async fn providers_command() -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", style("🔌 Available Providers and Models").bold().cyan());
+        println!("{}", style("Available Providers and Models").bold().cyan());
         println!();
 
         let providers = vec![
@@ -633,13 +633,13 @@ OLLAMA_BASE_URL=http://localhost:11434
 
         for (provider, models, description) in providers {
             println!("{}", style(provider).bold().green());
-            println!("  📝 {}", description);
-            println!("  🤖 Models: {}", models.join(", "));
+            println!("  {}", description);
+            println!("  Models: {}", models.join(", "));
             
             match provider {
-                "OpenAI" => println!("  🔑 Requires: OPENAI_API_KEY environment variable"),
-                "Ollama" => println!("  🏠 Requires: Local Ollama installation (ollama.ai)"),
-                "Custom" => println!("  🌐 Requires: --model-url parameter"),
+                "OpenAI" => println!("  Requires: OPENAI_API_KEY environment variable"),
+                "Ollama" => println!("  Requires: Local Ollama installation (ollama.ai)"),
+                "Custom" => println!("  Requires: --model-url parameter"),
                 _ => {}
             }
             println!();
@@ -654,7 +654,7 @@ OLLAMA_BASE_URL=http://localhost:11434
     }
 
     async fn examples_command() -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", style("📚 Example Configurations").bold().cyan());
+        println!("{}", style("Example Configurations").bold().cyan());
         println!();
 
         let examples = vec![
@@ -681,7 +681,7 @@ OLLAMA_BASE_URL=http://localhost:11434
     }
 
     async fn convert_command(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", style("🔄 Converting extraction results...").bold().cyan());
+        println!("{}", style("Converting extraction results...").bold().cyan());
 
         // Read input file
         let input_content = fs::read_to_string(&args.input)?;
@@ -700,7 +700,7 @@ OLLAMA_BASE_URL=http://localhost:11434
         let exported = export_document(&result, &export_config)?;
         fs::write(&args.output, exported)?;
 
-        println!("✅ Converted {} to {}", 
+        println!("Converted {} to {}", 
             args.input.display(), 
             args.output.display()
         );
@@ -713,18 +713,18 @@ OLLAMA_BASE_URL=http://localhost:11434
 
         // Handle sample pipeline creation
         if args.create_sample {
-            println!("{}", style("📝 Creating sample pipeline configuration...").bold().cyan());
+            println!("{}", style("Creating sample pipeline configuration...").bold().cyan());
 
             let sample_config = match args.sample_type.as_str() {
                 "requirements" => utils::create_requirements_pipeline(),
                 _ => {
-                    println!("❌ Unknown sample type: {}. Using requirements as default.", args.sample_type);
+                    println!("Unknown sample type: {}. Using requirements as default.", args.sample_type);
                     utils::create_requirements_pipeline()
                 }
             };
 
             utils::save_pipeline_to_file(&sample_config, &args.config)?;
-            println!("✅ Created sample pipeline configuration: {}", args.config.display());
+            println!("Created sample pipeline configuration: {}", args.config.display());
 
             // Print usage example
             println!("\n{}", style("Usage Example:").bold().yellow());
@@ -735,7 +735,7 @@ OLLAMA_BASE_URL=http://localhost:11434
         }
 
         // Execute pipeline
-        println!("{}", style("🔬 Executing pipeline...").bold().cyan());
+        println!("{}", style("Executing pipeline...").bold().cyan());
 
         // Load pipeline configuration
         let executor = PipelineExecutor::from_yaml_file(&args.config)?;
@@ -743,11 +743,11 @@ OLLAMA_BASE_URL=http://localhost:11434
         // Read input text
         let input_text = if args.input.starts_with("http") {
             // Handle URL input
-            println!("🌐 Downloading content from URL...");
+            println!("Downloading content from URL...");
             langextract_rust::io::download_text_from_url(&args.input).await?
         } else if std::path::Path::new(&args.input).exists() {
             // Handle file input
-            println!("📖 Reading content from file...");
+            println!("Reading content from file...");
             std::fs::read_to_string(&args.input)?
         } else {
             // Handle direct text input
@@ -762,7 +762,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 
         if let Some(output_path) = &args.output {
             std::fs::write(output_path, &output_content)?;
-            println!("💾 Pipeline results saved to: {}", output_path.display());
+            println!("Pipeline results saved to: {}", output_path.display());
         } else {
             println!("{}", output_content);
         }
@@ -780,7 +780,7 @@ OLLAMA_BASE_URL=http://localhost:11434
             };
             let html = export_pipeline_html(&result, &input_text, &cfg)?;
             std::fs::write(html_path, html)?;
-            println!("📊 Layered HTML exported to: {}", html_path.display());
+            println!("Layered HTML exported to: {}", html_path.display());
         }
 
         // Optional flattened JSON export (Rust-generated)
@@ -788,18 +788,18 @@ OLLAMA_BASE_URL=http://localhost:11434
             use langextract_rust::visualization::export_pipeline_flattened_json;
             let flat = export_pipeline_flattened_json(&result, &input_text, args.expand_nested_json)?;
             std::fs::write(json_path, flat)?;
-            println!("📄 Flattened JSON exported to: {}", json_path.display());
+            println!("Flattened JSON exported to: {}", json_path.display());
         }
 
         // Print summary
-        println!("\n{}", style("📊 Pipeline Summary:").bold().green());
-        println!("  📈 Total processing time: {}ms", result.total_time_ms);
-        println!("  🔄 Steps executed: {}", result.step_results.len());
-        println!("  ✅ Successful steps: {}", result.step_results.iter().filter(|s| s.success).count());
+        println!("\n{}", style("Pipeline Summary:").bold().green());
+        println!("  Total processing time: {}ms", result.total_time_ms);
+        println!("  Steps executed: {}", result.step_results.len());
+        println!("  Successful steps: {}", result.step_results.iter().filter(|s| s.success).count());
 
         // Show step details
         for step_result in &result.step_results {
-            let status = if step_result.success { "✅" } else { "❌" };
+            let status = if step_result.success { "ok" } else { "FAILED" };
             println!("  {} {}: {} extractions in {}ms",
                      status,
                      step_result.step_name,
@@ -922,7 +922,7 @@ batch_length: 4
                         
                         if args.show_intervals {
                             if let Some(interval) = &extraction.char_interval {
-                                println!("   📍 Position: {}:{}", 
+                                println!("   Position: {}:{}", 
                                     interval.start_pos.unwrap_or(0), 
                                     interval.end_pos.unwrap_or(0)
                                 );
@@ -940,22 +940,22 @@ batch_length: 4
     fn handle_extraction_error(error: LangExtractError) -> Box<dyn std::error::Error> {
         match &error {
             LangExtractError::NetworkError(_) => {
-                eprintln!("{}", style("🌐 Network Error:").red().bold());
+                eprintln!("{}", style("Network Error:").red().bold());
                 eprintln!("   Check your internet connection and API endpoints");
             }
             LangExtractError::ConfigurationError(_) => {
-                eprintln!("{}", style("⚙️  Configuration Error:").red().bold());
+                eprintln!("{}", style("Configuration Error:").red().bold());
                 eprintln!("   Check your API keys and model settings");
             }
             LangExtractError::InferenceError { provider, .. } => {
-                eprintln!("{}", style("🤖 Inference Error:").red().bold());
+                eprintln!("{}", style("Inference Error:").red().bold());
                 if let Some(provider) = provider {
                     eprintln!("   Provider: {}", provider);
                 }
                 eprintln!("   Check model availability and API limits");
             }
             _ => {
-                eprintln!("{}", style("❌ Extraction Error:").red().bold());
+                eprintln!("{}", style("Extraction Error:").red().bold());
             }
         }
         Box::new(error)

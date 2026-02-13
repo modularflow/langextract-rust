@@ -1684,7 +1684,7 @@ mod tests {
             assert!(current_end <= next_start, "Chunks should not overlap");
         }
 
-        println!("✅ Semantic chunking integration test passed with {} chunks", chunks.len());
+        println!("Semantic chunking integration test passed with {} chunks", chunks.len());
     }
 
     #[test]

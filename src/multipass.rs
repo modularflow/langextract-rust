@@ -210,7 +210,7 @@ impl MultiPassProcessor {
             let pass_start = Instant::now();
             
             if debug {
-                println!("🔄 Multi-pass extraction - Pass {}/{}", pass_num, self.config.max_passes);
+                println!("[multipass] pass {}/{}", pass_num, self.config.max_passes);
             }
 
             // For refinement passes, include context about previous findings
@@ -257,14 +257,14 @@ impl MultiPassProcessor {
             all_extractions.extend(pass_extractions);
 
             if debug {
-                println!("   Found {} new extractions in pass {}", 
-                    stats.extractions_per_pass.last().unwrap_or(&0), pass_num);
+                println!("[multipass] pass {} found {} new extractions", 
+                    pass_num, stats.extractions_per_pass.last().unwrap_or(&0));
             }
 
             // Early termination if no new extractions found
             if stats.extractions_per_pass.last() == Some(&0) {
                 if debug {
-                    println!("   No new extractions found, terminating early");
+                    println!("[multipass] no new extractions, stopping early");
                 }
                 break;
             }
@@ -293,7 +293,7 @@ impl MultiPassProcessor {
             let pass_start = Instant::now();
             
             if debug {
-                println!("🔄 Multi-pass extraction - Pass {}/{} ({} chunks)", 
+                println!("[multipass] pass {}/{} -- {} chunks", 
                     pass_num, self.config.max_passes, chunks_to_process.len());
             }
 
@@ -349,8 +349,8 @@ impl MultiPassProcessor {
             all_extractions.extend(pass_extractions);
 
             if debug {
-                println!("   Found {} new extractions, {} chunks for re-processing", 
-                    stats.extractions_per_pass.last().unwrap_or(&0),
+                println!("[multipass] pass {} found {} new extractions, {} chunks queued for reprocessing", 
+                    pass_num, stats.extractions_per_pass.last().unwrap_or(&0),
                     stats.reprocessed_chunks_per_pass.last().unwrap_or(&0));
             }
 
@@ -361,7 +361,7 @@ impl MultiPassProcessor {
             if chunks_to_process.is_empty() 
                 || stats.extractions_per_pass.last() == Some(&0) {
                 if debug {
-                    println!("   No more chunks to process or no new extractions, terminating");
+                    println!("[multipass] no remaining chunks or extractions, stopping");
                 }
                 break;
             }
@@ -399,7 +399,7 @@ impl MultiPassProcessor {
                 Ok(chunk_result) => chunk_results.push(chunk_result),
                 Err(e) => {
                     if debug {
-                        println!("   Warning: Chunk processing failed: {}", e);
+                        println!("[multipass] chunk processing failed: {}", e);
                     }
                 }
             }
@@ -575,7 +575,7 @@ impl MultiPassProcessor {
         }
 
         if debug {
-            println!("🎯 Quality filtering: {} extractions kept, {} filtered out", 
+            println!("[multipass] {} extractions kept, {} filtered", 
                 deduplicated.len(), stats.quality_stats.filtered_count);
         }
 
@@ -584,30 +584,29 @@ impl MultiPassProcessor {
 
     /// Print multi-pass extraction summary
     fn print_multipass_summary(&self, stats: &MultiPassStats) {
-        println!("\n📊 Multi-Pass Extraction Summary");
-        println!("================================");
-        println!("Total passes: {}", stats.total_passes);
-        println!("Total processing time: {:?}", stats.total_time);
+        println!("[multipass] summary");
+        println!("  passes: {}", stats.total_passes);
+        println!("  time: {:?}", stats.total_time);
         
         for (i, (&extractions, &time)) in stats.extractions_per_pass.iter()
             .zip(stats.time_per_pass.iter()).enumerate() {
             let reprocessed = stats.reprocessed_chunks_per_pass.get(i).unwrap_or(&0);
-            println!("Pass {}: {} extractions, {} chunks reprocessed, {:?}", 
+            println!("  pass {}: {} extractions, {} reprocessed, {:?}", 
                 i + 1, extractions, reprocessed, time);
         }
 
-        println!("\nQuality Statistics:");
-        println!("  Average quality: {:.2}", stats.quality_stats.average_quality);
-        println!("  High quality (>0.7): {}", stats.quality_stats.high_quality_count);
-        println!("  Medium quality (0.3-0.7): {}", stats.quality_stats.medium_quality_count);
-        println!("  Low quality (<0.3): {}", stats.quality_stats.low_quality_count);
-        println!("  Filtered duplicates: {}", stats.quality_stats.filtered_count);
+        println!("  quality: avg={:.2}, high={}, medium={}, low={}, filtered={}",
+            stats.quality_stats.average_quality,
+            stats.quality_stats.high_quality_count,
+            stats.quality_stats.medium_quality_count,
+            stats.quality_stats.low_quality_count,
+            stats.quality_stats.filtered_count);
 
-        println!("\nAlignment Statistics:");
-        println!("  Total: {}", stats.final_alignment_stats.total);
-        println!("  Exact matches: {}", stats.final_alignment_stats.exact);
-        println!("  Fuzzy matches: {}", stats.final_alignment_stats.fuzzy);
-        println!("  Success rate: {:.1}%", stats.final_alignment_stats.success_rate() * 100.0);
+        println!("  alignment: total={}, exact={}, fuzzy={}, rate={:.1}%",
+            stats.final_alignment_stats.total,
+            stats.final_alignment_stats.exact,
+            stats.final_alignment_stats.fuzzy,
+            stats.final_alignment_stats.success_rate() * 100.0);
     }
 }
 
